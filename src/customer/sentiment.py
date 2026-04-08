@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional
 
+from src.time_utils import utc_now
+
 
 class SentimentLabel(Enum):
     VERY_NEGATIVE = "very_negative"
@@ -39,7 +41,7 @@ class SocialPost:
     content: str
     author: str
     topic: str
-    timestamp: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+    timestamp: datetime.datetime = field(default_factory=utc_now)
     metadata: Dict = field(default_factory=dict)
 
 
@@ -49,7 +51,7 @@ class SentimentResult:
     label: SentimentLabel
     score: float  # -1.0 (very negative) to +1.0 (very positive)
     confidence: float  # 0.0 to 1.0
-    analyzed_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+    analyzed_at: datetime.datetime = field(default_factory=utc_now)
 
 
 class SentimentAnalyzer:

@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional
 
+from src.time_utils import utc_now
+
 
 class HealthStatus(Enum):
     HEALTHY = "healthy"
@@ -35,7 +37,7 @@ class SensorData:
     vibration: float
     pressure: float
     rpm: float
-    timestamp: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+    timestamp: datetime.datetime = field(default_factory=utc_now)
     additional_metrics: Dict[str, float] = field(default_factory=dict)
 
 
@@ -46,7 +48,7 @@ class MaintenanceAlert:
     anomaly_score: float
     description: str
     recommended_action: str
-    triggered_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+    triggered_at: datetime.datetime = field(default_factory=utc_now)
 
 
 @dataclass
@@ -54,7 +56,7 @@ class MaintenanceRecord:
     machine_id: str
     maintenance_type: MaintenanceType
     description: str
-    performed_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+    performed_at: datetime.datetime = field(default_factory=utc_now)
     technician: str = ""
     downtime_hours: float = 0.0
 

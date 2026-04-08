@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional
 
+from src.time_utils import utc_now
+
 
 class SystemType(Enum):
     HVAC = "hvac"
@@ -37,22 +39,22 @@ class BuildingSystem:
     location: str
     status: OperationalStatus = OperationalStatus.STANDBY
     settings: Dict = field(default_factory=dict)
-    last_updated: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+    last_updated: datetime.datetime = field(default_factory=utc_now)
 
     def update_setting(self, key: str, value) -> None:
         self.settings[key] = value
-        self.last_updated = datetime.datetime.utcnow()
+        self.last_updated = utc_now()
 
     def set_status(self, status: OperationalStatus) -> None:
         self.status = status
-        self.last_updated = datetime.datetime.utcnow()
+        self.last_updated = utc_now()
 
 
 @dataclass
 class MaintenanceRecord:
     system_id: str
     description: str
-    performed_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+    performed_at: datetime.datetime = field(default_factory=utc_now)
     performed_by: str = "system"
     notes: str = ""
 

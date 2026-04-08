@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional
 
+from src.time_utils import utc_now
+
 
 class ProcessStatus(Enum):
     PENDING = "pending"
@@ -40,15 +42,15 @@ class BusinessProcess:
 
     def start(self) -> None:
         self.status = ProcessStatus.IN_PROGRESS
-        self.start_time = datetime.datetime.utcnow()
+        self.start_time = utc_now()
 
     def complete(self) -> None:
         self.status = ProcessStatus.COMPLETED
-        self.end_time = datetime.datetime.utcnow()
+        self.end_time = utc_now()
 
     def fail(self) -> None:
         self.status = ProcessStatus.FAILED
-        self.end_time = datetime.datetime.utcnow()
+        self.end_time = utc_now()
 
     @property
     def duration_seconds(self) -> Optional[float]:

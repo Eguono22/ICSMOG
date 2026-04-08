@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional
 
+from src.time_utils import utc_now
+
 
 class CustomerStage(Enum):
     LEAD = "lead"
@@ -36,7 +38,7 @@ class Customer:
     email: str
     stage: CustomerStage = CustomerStage.LEAD
     account_value: float = 0.0
-    created_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+    created_at: datetime.datetime = field(default_factory=utc_now)
     metadata: Dict = field(default_factory=dict)
 
     def advance_stage(self) -> None:
@@ -54,7 +56,7 @@ class Interaction:
     interaction_type: InteractionType
     summary: str
     agent: str
-    timestamp: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+    timestamp: datetime.datetime = field(default_factory=utc_now)
     outcome: str = ""
 
 

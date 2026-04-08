@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional
 
+from src.time_utils import utc_now
+
 
 class Priority(Enum):
     LOW = "low"
@@ -38,13 +40,13 @@ class Task:
     priority: Priority = Priority.MEDIUM
     status: TaskStatus = TaskStatus.BACKLOG
     due_date: Optional[datetime.date] = None
-    created_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
-    updated_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+    created_at: datetime.datetime = field(default_factory=utc_now)
+    updated_at: datetime.datetime = field(default_factory=utc_now)
     tags: List[str] = field(default_factory=list)
 
     def transition(self, new_status: TaskStatus) -> None:
         self.status = new_status
-        self.updated_at = datetime.datetime.utcnow()
+        self.updated_at = utc_now()
 
     @property
     def is_overdue(self) -> bool:
@@ -91,7 +93,7 @@ class WorkflowManagement:
     def assign_task(self, task_id: str, assignee: str) -> None:
         task = self.get_task(task_id)
         task.assignee = assignee
-        task.updated_at = datetime.datetime.utcnow()
+        task.updated_at = utc_now()
 
     def get_tasks_by_assignee(self, assignee: str) -> List[Task]:
         return [t for t in self._tasks.values() if t.assignee == assignee]

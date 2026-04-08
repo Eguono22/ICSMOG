@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional
 
+from src.time_utils import utc_now
+
 
 class SensorType(Enum):
     TEMPERATURE = "temperature"
@@ -35,7 +37,7 @@ class SensorReading:
     sensor_type: SensorType
     value: float
     unit: str
-    timestamp: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+    timestamp: datetime.datetime = field(default_factory=utc_now)
     metadata: Dict = field(default_factory=dict)
 
 
@@ -44,7 +46,7 @@ class Alert:
     sensor_id: str
     reading: SensorReading
     message: str
-    triggered_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+    triggered_at: datetime.datetime = field(default_factory=utc_now)
 
 
 class IoTSensor:

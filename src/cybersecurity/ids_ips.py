@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
+from src.time_utils import utc_now
+
 
 class ThreatLevel(Enum):
     LOW = "low"
@@ -34,7 +36,7 @@ class NetworkEvent:
     port: int
     protocol: str
     payload_size: int
-    timestamp: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+    timestamp: datetime.datetime = field(default_factory=utc_now)
     metadata: Dict = field(default_factory=dict)
 
 
@@ -44,7 +46,7 @@ class Alert:
     threat_level: ThreatLevel
     description: str
     status: AlertStatus = AlertStatus.OPEN
-    created_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+    created_at: datetime.datetime = field(default_factory=utc_now)
     resolved_at: Optional[datetime.datetime] = None
 
     def acknowledge(self) -> None:
@@ -52,7 +54,7 @@ class Alert:
 
     def resolve(self) -> None:
         self.status = AlertStatus.RESOLVED
-        self.resolved_at = datetime.datetime.utcnow()
+        self.resolved_at = utc_now()
 
 
 class IntrusionDetectionSystem:

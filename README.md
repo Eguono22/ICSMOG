@@ -175,6 +175,47 @@ Output JSON for a single step:
 python main.py --step 2 --json
 ```
 
+Example JSON payload for a single step:
+
+```json
+{
+  "step": 2,
+  "result": {
+    "erp_dashboard": {
+      "organization": "Acme Corp",
+      "total_processes": 1,
+      "status_breakdown": {
+        "pending": 0,
+        "in_progress": 1,
+        "completed": 0,
+        "failed": 0
+      },
+      "department_breakdown": {
+        "finance": 0,
+        "hr": 1,
+        "procurement": 0,
+        "supply_chain": 0,
+        "operations": 0
+      }
+    },
+    "bi_dashboard": {
+      "platform": "ICSMOG-BI",
+      "datasets": 1,
+      "reports": 1,
+      "report_titles": [
+        "Revenue by Region"
+      ]
+    },
+    "bi_stats": {
+      "count": 3,
+      "mean": 118333.33333333333,
+      "median": 120000,
+      "stdev": 22546.248764114473
+    }
+  }
+}
+```
+
 ---
 
 ## Testing

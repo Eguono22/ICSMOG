@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Dict, List, Optional
 
+from src.time_utils import utc_now
+
 
 class EventSeverity(Enum):
     INFO = "info"
@@ -35,7 +37,7 @@ class SecurityEvent:
     category: EventCategory
     severity: EventSeverity
     message: str
-    timestamp: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+    timestamp: datetime.datetime = field(default_factory=utc_now)
     raw_data: Dict = field(default_factory=dict)
 
 
@@ -133,7 +135,7 @@ class SecurityInformationEventManagement:
                         "rule": rule.name,
                         "description": rule.description,
                         "severity": rule.severity.value,
-                        "triggered_at": datetime.datetime.utcnow().isoformat(),
+                        "triggered_at": utc_now().isoformat(),
                     }
                 )
                 self._rule_active_states[rule.name] = True

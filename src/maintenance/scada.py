@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Dict, List, Optional
 
+from src.time_utils import utc_now
+
 
 class ControlMode(Enum):
     AUTOMATIC = "automatic"
@@ -37,7 +39,7 @@ class ProcessVariable:
     setpoint: Optional[float] = None
     low_limit: Optional[float] = None
     high_limit: Optional[float] = None
-    timestamp: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+    timestamp: datetime.datetime = field(default_factory=utc_now)
 
     @property
     def in_range(self) -> bool:
@@ -60,13 +62,13 @@ class AlarmRecord:
     message: str
     severity: str
     state: ProcessState
-    triggered_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+    triggered_at: datetime.datetime = field(default_factory=utc_now)
     acknowledged: bool = False
     acknowledged_at: Optional[datetime.datetime] = None
 
     def acknowledge(self) -> None:
         self.acknowledged = True
-        self.acknowledged_at = datetime.datetime.utcnow()
+        self.acknowledged_at = utc_now()
 
 
 class PLCController:
@@ -92,7 +94,7 @@ class PLCController:
         if tag not in self._variables:
             raise KeyError(f"Tag '{tag}' not registered")
         self._variables[tag].value = value
-        self._variables[tag].timestamp = datetime.datetime.utcnow()
+        self._variables[tag].timestamp = utc_now()
         if self.mode == ControlMode.AUTOMATIC and self._control_logic:
             self._control_logic(self)
 
