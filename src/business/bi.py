@@ -28,6 +28,16 @@ class DataSet:
     rows: List[Dict[str, Any]] = field(default_factory=list)
 
     def add_row(self, row: Dict[str, Any]) -> None:
+        missing_columns = [col for col in self.columns if col not in row]
+        if missing_columns:
+            raise ValueError(
+                f"Row is missing required columns: {', '.join(missing_columns)}"
+            )
+        unknown_columns = [col for col in row if col not in self.columns]
+        if unknown_columns:
+            raise ValueError(
+                f"Row contains unknown columns: {', '.join(unknown_columns)}"
+            )
         self.rows.append(row)
 
     def column_values(self, column: str) -> List[Any]:
@@ -107,6 +117,14 @@ class BusinessIntelligence:
     # ------------------------------------------------------------------
 
     def create_report(self, report: Report) -> None:
+        if report.x_axis not in report.dataset.columns:
+            raise ValueError(
+                f"x_axis '{report.x_axis}' is not present in dataset '{report.dataset.name}'"
+            )
+        if report.y_axis not in report.dataset.columns:
+            raise ValueError(
+                f"y_axis '{report.y_axis}' is not present in dataset '{report.dataset.name}'"
+            )
         self._reports[report.title] = report
 
     def get_report(self, title: str) -> Report:

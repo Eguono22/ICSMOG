@@ -58,6 +58,7 @@ class SecurityInformationEventManagement:
         self._events: List[SecurityEvent] = []
         self._correlation_rules: List[CorrelationRule] = []
         self._triggered_rules: List[Dict] = []
+        self._rule_active_states: Dict[str, bool] = {}
         self._register_default_rules()
 
     # ------------------------------------------------------------------
@@ -81,6 +82,7 @@ class SecurityInformationEventManagement:
     def add_correlation_rule(self, rule: CorrelationRule) -> None:
         """Register a new correlation rule."""
         self._correlation_rules.append(rule)
+        self._rule_active_states.setdefault(rule.name, False)
 
     # ------------------------------------------------------------------
     # Queries
@@ -122,7 +124,10 @@ class SecurityInformationEventManagement:
 
     def _run_correlation(self, _new_event: SecurityEvent) -> None:
         for rule in self._correlation_rules:
-            if rule.condition(self._events):
+            is_triggered = rule.condition(self._events)
+            is_active = self._rule_active_states.get(rule.name, False)
+
+            if is_triggered and not is_active:
                 self._triggered_rules.append(
                     {
                         "rule": rule.name,
@@ -131,6 +136,9 @@ class SecurityInformationEventManagement:
                         "triggered_at": datetime.datetime.utcnow().isoformat(),
                     }
                 )
+                self._rule_active_states[rule.name] = True
+            elif not is_triggered and is_active:
+                self._rule_active_states[rule.name] = False
 
     def _register_default_rules(self) -> None:
         def _brute_force(events: List[SecurityEvent]) -> bool:

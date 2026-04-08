@@ -28,6 +28,12 @@ class TestERP:
         retrieved = self.erp.get_process("P001")
         assert retrieved.process_id == "P001"
 
+    def test_register_duplicate_process_raises(self):
+        proc = self._make_process()
+        self.erp.register_process(proc)
+        with pytest.raises(ValueError):
+            self.erp.register_process(proc)
+
     def test_get_unknown_process_raises(self):
         with pytest.raises(KeyError):
             self.erp.get_process("NONEXISTENT")
@@ -100,6 +106,16 @@ class TestBI:
         self.bi.register_dataset(ds)
         assert self.bi.get_dataset("test_ds") is ds
 
+    def test_dataset_add_row_missing_column_raises(self):
+        ds = DataSet(name="test_ds", columns=["category", "value"])
+        with pytest.raises(ValueError):
+            ds.add_row({"category": "A"})
+
+    def test_dataset_add_row_unknown_column_raises(self):
+        ds = DataSet(name="test_ds", columns=["category", "value"])
+        with pytest.raises(ValueError):
+            ds.add_row({"category": "A", "value": 10, "unexpected": 1})
+
     def test_get_unknown_dataset_raises(self):
         with pytest.raises(KeyError):
             self.bi.get_dataset("NONEXISTENT")
@@ -111,6 +127,14 @@ class TestBI:
                         x_axis="category", y_axis="value")
         self.bi.create_report(report)
         assert self.bi.get_report("Test Report") is report
+
+    def test_create_report_invalid_axis_raises(self):
+        ds = self._make_dataset()
+        self.bi.register_dataset(ds)
+        report = Report(title="Bad Report", dataset=ds, chart_type=ChartType.BAR,
+                        x_axis="missing", y_axis="value")
+        with pytest.raises(ValueError):
+            self.bi.create_report(report)
 
     def test_get_unknown_report_raises(self):
         with pytest.raises(KeyError):

@@ -8,9 +8,10 @@ and anomaly-based detection techniques.
 from __future__ import annotations
 
 import datetime
+import math
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 
 class ThreatLevel(Enum):
@@ -72,6 +73,10 @@ class IntrusionDetectionSystem:
         self._alerts: List[Alert] = []
         self._blocklist: set = set()
         self._event_log: List[NetworkEvent] = []
+        self._payload_baseline: List[int] = []
+        self._anomaly_z_threshold: float = 3.0
+        self._anomaly_min_events: int = 5
+        self._anomaly_window_size: int = 100
 
     # ------------------------------------------------------------------
     # Public API
@@ -83,6 +88,8 @@ class IntrusionDetectionSystem:
         alert = self._inspect(event)
         if alert:
             self._alerts.append(alert)
+        else:
+            self._update_payload_baseline(event.payload_size)
         return alert
 
     def add_to_blocklist(self, ip: str) -> None:
@@ -112,6 +119,34 @@ class IntrusionDetectionSystem:
             "open_alerts": len(self.open_alerts),
             "threat_counts": counts,
             "blocklisted_ips": len(self._blocklist),
+            "anomaly_detection": self.get_anomaly_config(),
+        }
+
+    def configure_anomaly_detection(
+        self,
+        z_threshold: float = 3.0,
+        min_events: int = 5,
+        window_size: int = 100,
+    ) -> None:
+        """Tune baseline-based anomaly detection parameters."""
+        if z_threshold <= 0:
+            raise ValueError("z_threshold must be > 0")
+        if min_events < 2:
+            raise ValueError("min_events must be >= 2")
+        if window_size < min_events:
+            raise ValueError("window_size must be >= min_events")
+        self._anomaly_z_threshold = float(z_threshold)
+        self._anomaly_min_events = int(min_events)
+        self._anomaly_window_size = int(window_size)
+        if len(self._payload_baseline) > self._anomaly_window_size:
+            self._payload_baseline = self._payload_baseline[-self._anomaly_window_size :]
+
+    def get_anomaly_config(self) -> Dict[str, Any]:
+        return {
+            "z_threshold": self._anomaly_z_threshold,
+            "min_events": self._anomaly_min_events,
+            "window_size": self._anomaly_window_size,
+            "baseline_events": len(self._payload_baseline),
         }
 
     # ------------------------------------------------------------------
@@ -139,6 +174,42 @@ class IntrusionDetectionSystem:
                     f"Unusually large payload detected: {event.payload_size} bytes"
                 ),
             )
+        anomaly_score = self._payload_anomaly_score(event.payload_size)
+        if anomaly_score is not None:
+            threat_level = (
+                ThreatLevel.HIGH if anomaly_score >= (self._anomaly_z_threshold * 2) else ThreatLevel.MEDIUM
+            )
+            return Alert(
+                event=event,
+                threat_level=threat_level,
+                description=(
+                    "Anomalous payload size detected: "
+                    f"{event.payload_size} bytes (z={anomaly_score:.2f}, "
+                    f"threshold={self._anomaly_z_threshold:.2f})"
+                ),
+            )
+        return None
+
+    def _update_payload_baseline(self, payload_size: int) -> None:
+        self._payload_baseline.append(payload_size)
+        if len(self._payload_baseline) > self._anomaly_window_size:
+            self._payload_baseline.pop(0)
+
+    def _payload_anomaly_score(self, payload_size: int) -> Optional[float]:
+        if len(self._payload_baseline) < self._anomaly_min_events:
+            return None
+        mean = sum(self._payload_baseline) / len(self._payload_baseline)
+        variance = sum((x - mean) ** 2 for x in self._payload_baseline) / len(self._payload_baseline)
+        std_dev = math.sqrt(variance)
+        if std_dev == 0:
+            if payload_size == mean:
+                z_score = 0.0
+            else:
+                z_score = abs(payload_size - mean) / max(abs(mean), 1.0)
+        else:
+            z_score = abs(payload_size - mean) / std_dev
+        if z_score >= self._anomaly_z_threshold:
+            return z_score
         return None
 
 

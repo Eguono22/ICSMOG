@@ -73,6 +73,8 @@ class EnterpriseResourcePlanning:
 
     def register_process(self, process: BusinessProcess) -> None:
         """Register a business process with the ERP system."""
+        if process.process_id in self._processes:
+            raise ValueError(f"Process '{process.process_id}' is already registered")
         self._processes[process.process_id] = process
 
     def update_kpi(self, process_id: str, kpi_name: str, value: float) -> None:

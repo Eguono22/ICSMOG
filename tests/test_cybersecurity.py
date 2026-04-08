@@ -93,6 +93,28 @@ class TestIntrusionDetectionSystem:
         alert.resolve()
         assert len(self.ids.open_alerts) == 0
 
+    def test_payload_anomaly_detection_triggers_after_baseline(self):
+        for _ in range(6):
+            self.ids.analyze_event(_make_event(payload_size=1000))
+        alert = self.ids.analyze_event(_make_event(payload_size=4500))
+        assert alert is not None
+        assert "Anomalous payload size" in alert.description
+
+    def test_payload_anomaly_tuning_can_suppress_alert(self):
+        self.ids.configure_anomaly_detection(z_threshold=100.0, min_events=5, window_size=50)
+        for _ in range(6):
+            self.ids.analyze_event(_make_event(payload_size=1000))
+        alert = self.ids.analyze_event(_make_event(payload_size=4500))
+        assert alert is None
+
+    def test_invalid_anomaly_config_raises(self):
+        with pytest.raises(ValueError):
+            self.ids.configure_anomaly_detection(z_threshold=0)
+        with pytest.raises(ValueError):
+            self.ids.configure_anomaly_detection(min_events=1)
+        with pytest.raises(ValueError):
+            self.ids.configure_anomaly_detection(min_events=10, window_size=5)
+
 
 class TestIntrusionPreventionSystem:
     def setup_method(self):
@@ -159,6 +181,15 @@ class TestSIEM:
         triggered = self.siem.get_triggered_rules()
         rule_names = [r["rule"] for r in triggered]
         assert "brute_force_detection" in rule_names
+
+    def test_brute_force_rule_triggers_once_while_condition_stays_true(self):
+        for _ in range(8):
+            self.siem.ingest_event(_make_security_event(
+                category=EventCategory.AUTHENTICATION,
+                severity=EventSeverity.ERROR,
+            ))
+        triggered = [r for r in self.siem.get_triggered_rules() if r["rule"] == "brute_force_detection"]
+        assert len(triggered) == 1
 
     def test_custom_correlation_rule(self):
         rule = CorrelationRule(

@@ -157,6 +157,24 @@ Execute the full demo, which initialises all six monitoring subsystems and print
 python main.py
 ```
 
+Run only a specific step (for example, Step 1 - Network & Cybersecurity Monitoring):
+
+```bash
+python main.py --step 1
+```
+
+Output machine-readable JSON for all steps:
+
+```bash
+python main.py --json
+```
+
+Output JSON for a single step:
+
+```bash
+python main.py --step 2 --json
+```
+
 ---
 
 ## Testing
