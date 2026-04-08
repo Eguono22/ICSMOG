@@ -3,7 +3,6 @@
 import pytest
 
 from src.cybersecurity.ids_ips import (
-    Alert,
     AlertStatus,
     IntrusionDetectionSystem,
     IntrusionPreventionSystem,

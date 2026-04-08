@@ -8,7 +8,6 @@ predict failures before they happen, common in manufacturing environments.
 from __future__ import annotations
 
 import datetime
-import math
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional

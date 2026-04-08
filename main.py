@@ -14,12 +14,11 @@ from typing import Any, Callable, Dict
 
 from src.business import BusinessIntelligence, EnterpriseResourcePlanning
 from src.business.bi import ChartType, DataSet, Report
-from src.business.erp import BusinessProcess, Department, ProcessStatus
+from src.business.erp import BusinessProcess, Department
 from src.customer import CustomerRelationshipManagement, SentimentAnalyzer
 from src.customer.crm import Customer, CustomerStage, Interaction, InteractionType
 from src.customer.sentiment import DataSource, SocialPost
 from src.cybersecurity import (
-    IntrusionDetectionSystem,
     IntrusionPreventionSystem,
     SecurityInformationEventManagement,
 )

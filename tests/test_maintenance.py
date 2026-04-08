@@ -11,10 +11,7 @@ from src.maintenance.predictive import (
     SensorData,
 )
 from src.maintenance.scada import (
-    AlarmRecord,
-    ControlMode,
     PLCController,
-    ProcessState,
     ProcessVariable,
     SCADASystem,
 )
