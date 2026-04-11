@@ -21,6 +21,7 @@ ICSMOG is a Python framework that simulates advanced organizational monitoring s
 - [Installation](#installation)
 - [Running](#running)
 - [Testing](#testing)
+- [Contributing](#contributing)
 
 ---
 
@@ -226,3 +227,10 @@ Run the full test suite with:
 pip install pytest
 python -m pytest tests/ -v
 ```
+
+---
+
+## Contributing
+
+For local development setup, linting, test commands, and pull request guidance,
+see [CONTRIBUTING.md](CONTRIBUTING.md).
