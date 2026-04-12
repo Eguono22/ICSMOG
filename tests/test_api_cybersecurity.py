@@ -9,6 +9,7 @@ import http.cookiejar
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
+from pathlib import Path
 
 from src.api.cybersecurity import build_handler
 from src.services.cybersecurity import CybersecurityMonitoringService
@@ -105,6 +106,7 @@ def test_dashboard_page_renders_html():
     assert "Operator Controls" in html
     assert "Operator Directory" in html
     assert "Sign In" in html
+    assert "Scan Inbox Directory" in html
     assert "text/html" in content_type
 
 
@@ -451,6 +453,100 @@ def test_failed_import_is_recorded_in_import_history():
     assert history["imports"][0]["status"] == "failed"
     assert history["imports"][0]["operator_name"] == "analyst-1"
     assert history["imports"][0]["error_message"] is not None
+
+
+def test_scan_directory_endpoint_imports_and_skips_processed_files():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        inbox = Path(temp_dir) / "inbox"
+        inbox.mkdir()
+        (inbox / "network_batch.csv").write_text(
+            "source_ip,destination_ip,port,protocol,payload_size\n"
+            "198.51.100.101,10.0.0.101,22,SSH,150\n",
+            encoding="utf-8",
+        )
+        server, thread = _start_test_server(
+            CybersecurityMonitoringService(
+                store=CybersecurityEventStore(f"{temp_dir}/cybersecurity.db")
+            )
+        )
+        base_url = f"http://127.0.0.1:{server.server_address[1]}"
+        try:
+            first_scan = _read_json(
+                f"{base_url}/cybersecurity/import/scan-directory",
+                method="POST",
+                payload={
+                    "directory_path": str(inbox),
+                    "target": "network",
+                },
+                headers=ANALYST_HEADERS,
+            )
+            second_scan = _read_json(
+                f"{base_url}/cybersecurity/import/scan-directory",
+                method="POST",
+                payload={
+                    "directory_path": str(inbox),
+                    "target": "network",
+                },
+                headers=ANALYST_HEADERS,
+            )
+            history = _read_json(f"{base_url}/cybersecurity/import-history?limit=10")
+            audit_log = _read_json(f"{base_url}/cybersecurity/audit-log?limit=10")
+            alerts = _read_json(f"{base_url}/cybersecurity/alerts")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    assert first_scan["scanned_files"] == 1
+    assert first_scan["imported_files"] == 1
+    assert first_scan["skipped_files"] == 0
+    assert first_scan["results"][0]["status"] == "imported"
+    assert second_scan["imported_files"] == 0
+    assert second_scan["skipped_files"] == 1
+    assert second_scan["results"][0]["reason"] == "already_processed"
+    assert len(history["imports"]) == 1
+    assert history["imports"][0]["file_path"].endswith("network_batch.csv")
+    assert alerts["alerts"][0]["source_ip"] == "198.51.100.101"
+    assert audit_log["audit_log"][0]["action_type"] == "scan_csv_directory"
+
+
+def test_scan_directory_endpoint_records_failed_csv_files():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        inbox = Path(temp_dir) / "inbox"
+        inbox.mkdir()
+        (inbox / "broken_network.csv").write_text(
+            "source_ip,destination_ip,protocol,payload_size\n"
+            "198.51.100.111,10.0.0.111,SSH,150\n",
+            encoding="utf-8",
+        )
+        server, thread = _start_test_server(
+            CybersecurityMonitoringService(
+                store=CybersecurityEventStore(f"{temp_dir}/cybersecurity.db")
+            )
+        )
+        base_url = f"http://127.0.0.1:{server.server_address[1]}"
+        try:
+            scan_result = _read_json(
+                f"{base_url}/cybersecurity/import/scan-directory",
+                method="POST",
+                payload={
+                    "directory_path": str(inbox),
+                    "target": "network",
+                },
+                headers=ANALYST_HEADERS,
+            )
+            history = _read_json(f"{base_url}/cybersecurity/import-history?limit=10")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    assert scan_result["scanned_files"] == 1
+    assert scan_result["failed_files"] == 1
+    assert scan_result["results"][0]["status"] == "failed"
+    assert "Missing network event fields" in scan_result["results"][0]["error"]
+    assert history["imports"][0]["status"] == "failed"
+    assert history["imports"][0]["file_path"].endswith("broken_network.csv")
 
 
 def test_protected_operator_actions_require_credentials():

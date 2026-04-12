@@ -173,6 +173,7 @@ Example endpoints:
 - `GET /cybersecurity/operators`
 - `POST /cybersecurity/login`
 - `POST /cybersecurity/logout`
+- `POST /cybersecurity/import/scan-directory`
 - `POST /cybersecurity/alerts/<alert_id>/acknowledge`
 - `POST /cybersecurity/alerts/<alert_id>/resolve`
 - `POST /cybersecurity/operators`
@@ -211,6 +212,12 @@ The browser dashboard now supports session-based sign-in through
 `POST /cybersecurity/login` and `POST /cybersecurity/logout`, so operators do not
 need to resend raw credentials on every protected action. Header-based
 authentication still works for scripts and test automation.
+
+For recurring feeds, operators can also trigger
+`POST /cybersecurity/import/scan-directory` with a server-accessible
+`directory_path`, `target` (`network` or `security`), and optional filename
+`pattern` to import matching CSV files while skipping files that were already
+processed.
 
 ## Example Direction
 

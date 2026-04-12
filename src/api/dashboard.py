@@ -754,6 +754,22 @@ def render_dashboard_html() -> str:
               <span class="button-copy">Reset the editor so you can paste a fresh payload.</span>
             </button>
           </div>
+          <div class="operator-grid">
+            <div class="operator-field">
+              <label for="scan-directory-path">Inbox Directory</label>
+              <input id="scan-directory-path" type="text" placeholder="examples">
+            </div>
+            <div class="operator-field">
+              <label for="scan-pattern">Filename Pattern</label>
+              <input id="scan-pattern" type="text" value="*.csv" placeholder="*.csv">
+            </div>
+          </div>
+          <div class="operator-actions">
+            <button class="secondary" id="scan-directory" type="button">
+              <span class="button-title">Scan Inbox Directory</span>
+              <span class="button-copy">Import matching CSV files from a server-accessible folder.</span>
+            </button>
+          </div>
           <div class="operator-status" id="operator-status">Set operator credentials, then run an inline CSV import.</div>
         </div>
       </article>
@@ -1268,6 +1284,33 @@ def render_dashboard_html() -> str:
       await refreshOperatorContext();
     }
 
+    async function scanInboxDirectory() {
+      const directoryPath = document.getElementById("scan-directory-path").value.trim();
+      const pattern = document.getElementById("scan-pattern").value.trim() || "*.csv";
+      const target = document.getElementById("import-target").value;
+
+      if (!directoryPath) {
+        setOperatorStatus("Add a server-accessible inbox directory before scanning.", "error");
+        return;
+      }
+
+      setOperatorStatus(`Scanning ${directoryPath} for ${target} CSV files...`);
+      const result = await fetchJson("/cybersecurity/import/scan-directory", {
+        method: "POST",
+        body: JSON.stringify({
+          directory_path: directoryPath,
+          target,
+          pattern,
+        }),
+      });
+      setOperatorStatus(
+        `Scanned ${result.scanned_files} file${result.scanned_files === 1 ? "" : "s"} | ${result.imported_files} imported | ${result.skipped_files} skipped | ${result.failed_files} failed.`,
+        result.failed_files ? "error" : "success"
+      );
+      await refreshDashboard();
+      await refreshOperatorContext();
+    }
+
     async function createOperatorAccount() {
       const payload = {
         username: document.getElementById("new-operator-name").value.trim(),
@@ -1351,6 +1394,12 @@ def render_dashboard_html() -> str:
 
     document.getElementById("run-import").addEventListener("click", () => {
       runInlineImport().catch((error) => {
+        setOperatorStatus(error.message, "error");
+      });
+    });
+
+    document.getElementById("scan-directory").addEventListener("click", () => {
+      scanInboxDirectory().catch((error) => {
         setOperatorStatus(error.message, "error");
       });
     });

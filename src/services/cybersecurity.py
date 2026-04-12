@@ -7,6 +7,7 @@ import csv
 import hashlib
 import io
 import json
+import fnmatch
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -48,6 +49,7 @@ class CybersecurityMonitoringService:
         self._memory_operator_accounts = (
             {} if store is not None else _build_default_operator_accounts()
         )
+        self._memory_processed_imports: set[str] = set()
         self._rehydrate_from_store()
 
     def ingest_network_events(self, events: Iterable[NetworkEvent]) -> Dict[str, Any]:
@@ -168,6 +170,110 @@ class CybersecurityMonitoringService:
         result["imported_from"] = imported_from
         result["operator_name"] = operator_name
         return result
+
+    def scan_csv_directory(
+        self,
+        directory_path: str,
+        target: str,
+        operator_name: str = "system",
+        pattern: str = "*.csv",
+    ) -> Dict[str, Any]:
+        operator_name = _normalize_operator_name(operator_name)
+        normalized_target = _normalize_import_target(target)
+        directory = Path(directory_path)
+        if not directory.exists():
+            raise ValueError(f"Directory '{directory_path}' was not found")
+        if not directory.is_dir():
+            raise ValueError(f"Path '{directory_path}' is not a directory")
+        if not str(pattern).strip():
+            raise ValueError("pattern is required")
+
+        matched_files = sorted(
+            path
+            for path in directory.iterdir()
+            if path.is_file() and fnmatch.fnmatch(path.name, pattern)
+        )
+        imported_files = 0
+        skipped_files = 0
+        failed_files = 0
+        results: List[Dict[str, Any]] = []
+
+        for file_path in matched_files:
+            try:
+                file_key = _build_import_file_key(file_path, normalized_target)
+                if self._has_processed_import(file_key):
+                    skipped_files += 1
+                    results.append(
+                        {
+                            "file_path": str(file_path),
+                            "status": "skipped",
+                            "reason": "already_processed",
+                        }
+                    )
+                    continue
+
+                if normalized_target == "network":
+                    import_result = self.import_network_csv(
+                        {"csv_path": str(file_path)},
+                        operator_name=operator_name,
+                    )
+                else:
+                    import_result = self.import_security_csv(
+                        {"csv_path": str(file_path)},
+                        operator_name=operator_name,
+                    )
+            except (OSError, ValueError) as exc:
+                failed_files += 1
+                results.append(
+                    {
+                        "file_path": str(file_path),
+                        "status": "failed",
+                        "error": str(exc),
+                    }
+                )
+                continue
+
+            imported_files += 1
+            self._mark_processed_import(
+                file_key,
+                str(file_path),
+                f"{normalized_target}_csv",
+            )
+            results.append(
+                {
+                    "file_path": str(file_path),
+                    "status": "imported",
+                    "ingested_events": import_result["ingested_events"],
+                }
+            )
+
+        if self.store is not None:
+            self.store.record_audit_event(
+                operator_name=operator_name,
+                action_type="scan_csv_directory",
+                target=str(directory),
+                status="success",
+                details={
+                    "target": normalized_target,
+                    "pattern": pattern,
+                    "scanned_files": len(matched_files),
+                    "imported_files": imported_files,
+                    "skipped_files": skipped_files,
+                    "failed_files": failed_files,
+                },
+            )
+
+        return {
+            "directory_path": str(directory),
+            "target": normalized_target,
+            "pattern": pattern,
+            "scanned_files": len(matched_files),
+            "imported_files": imported_files,
+            "skipped_files": skipped_files,
+            "failed_files": failed_files,
+            "results": results,
+            "operator_name": operator_name,
+        }
 
     def get_alerts(
         self,
@@ -453,6 +559,22 @@ class CybersecurityMonitoringService:
             return self.store.get_operator_account(username)
         return self._memory_operator_accounts.get(username)
 
+    def _has_processed_import(self, file_key: str) -> bool:
+        if self.store is not None:
+            return self.store.has_processed_import(file_key)
+        return file_key in self._memory_processed_imports
+
+    def _mark_processed_import(
+        self,
+        file_key: str,
+        file_path: str,
+        import_type: str,
+    ) -> None:
+        if self.store is not None:
+            self.store.mark_processed_import(file_key, file_path, import_type)
+            return
+        self._memory_processed_imports.add(file_key)
+
 
 def build_sample_network_events() -> List[NetworkEvent]:
     """Return the default network events used by the CLI demo."""
@@ -722,6 +844,13 @@ def _normalize_operator_name(operator_name: str) -> str:
     return normalized
 
 
+def _normalize_import_target(target: str) -> str:
+    normalized = str(target).strip().lower()
+    if normalized not in {"network", "security"}:
+        raise ValueError("target must be either 'network' or 'security'")
+    return normalized
+
+
 def _hash_api_key(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
@@ -782,3 +911,11 @@ def _build_alert_id(serialized_alert: Dict[str, Any]) -> str:
         ]
     )
     return hashlib.sha1(fingerprint.encode("utf-8")).hexdigest()[:12]
+
+
+def _build_import_file_key(path: Path, target: str) -> str:
+    digest = hashlib.sha256()
+    digest.update(target.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(path.read_bytes())
+    return digest.hexdigest()

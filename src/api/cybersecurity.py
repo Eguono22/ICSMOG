@@ -33,7 +33,7 @@ def run_cybersecurity_api_server(
     print("Available endpoints: GET /, GET /dashboard, GET /health, GET /cybersecurity/dashboard, "
       "GET /cybersecurity/alerts, GET /cybersecurity/import-history, GET /cybersecurity/audit-log, GET /cybersecurity/me, "
       "GET /cybersecurity/operators, POST /cybersecurity/login, POST /cybersecurity/logout, "
-      "POST /cybersecurity/operators, POST /cybersecurity/network-events, "
+      "POST /cybersecurity/operators, POST /cybersecurity/import/scan-directory, POST /cybersecurity/network-events, "
           "POST /cybersecurity/security-events, POST /cybersecurity/import/network-csv, "
           "POST /cybersecurity/import/security-csv, POST /cybersecurity/alerts/<id>/acknowledge, "
           "POST /cybersecurity/alerts/<id>/resolve")
@@ -285,6 +285,27 @@ def build_handler(
                     self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                     return
                 self._send_json(HTTPStatus.CREATED, result)
+                return
+
+            if path == "/cybersecurity/import/scan-directory":
+                operator = self._require_operator("import_csv")
+                if operator is None:
+                    return
+                payload, error = self._read_json_body()
+                if error is not None:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": error})
+                    return
+                try:
+                    result = service.scan_csv_directory(
+                        directory_path=str(payload.get("directory_path", "")),
+                        target=str(payload.get("target", "")),
+                        operator_name=operator["username"],
+                        pattern=str(payload.get("pattern", "*.csv")),
+                    )
+                except ValueError as exc:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                self._send_json(HTTPStatus.OK, result)
                 return
 
             if path == "/cybersecurity/operators":
