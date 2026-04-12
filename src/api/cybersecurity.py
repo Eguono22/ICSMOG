@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import secrets
+from http.cookies import SimpleCookie
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
@@ -30,7 +32,8 @@ def run_cybersecurity_api_server(
     print(f"Using SQLite storage at {storage_path}")
     print("Available endpoints: GET /, GET /dashboard, GET /health, GET /cybersecurity/dashboard, "
       "GET /cybersecurity/alerts, GET /cybersecurity/import-history, GET /cybersecurity/audit-log, GET /cybersecurity/me, "
-      "GET /cybersecurity/operators, POST /cybersecurity/operators, POST /cybersecurity/network-events, "
+      "GET /cybersecurity/operators, POST /cybersecurity/login, POST /cybersecurity/logout, "
+      "POST /cybersecurity/operators, POST /cybersecurity/network-events, "
           "POST /cybersecurity/security-events, POST /cybersecurity/import/network-csv, "
           "POST /cybersecurity/import/security-csv, POST /cybersecurity/alerts/<id>/acknowledge, "
           "POST /cybersecurity/alerts/<id>/resolve")
@@ -47,6 +50,7 @@ def build_handler(
     service: CybersecurityMonitoringService,
 ) -> type[BaseHTTPRequestHandler]:
     """Create a request handler bound to a specific service instance."""
+    sessions: dict[str, dict[str, Any]] = {}
 
     class CybersecurityAPIHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
@@ -161,6 +165,41 @@ def build_handler(
 
         def do_POST(self) -> None:  # noqa: N802
             path = urlsplit(self.path).path
+
+            if path == "/cybersecurity/login":
+                payload, error = self._read_json_body()
+                if error is not None:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": error})
+                    return
+                username = str(payload.get("username", "")).strip()
+                api_key = str(payload.get("api_key", ""))
+                try:
+                    operator = service.authenticate_operator(username, api_key)
+                except ValueError as exc:
+                    self._send_json(
+                        HTTPStatus.UNAUTHORIZED,
+                        {"error": str(exc)},
+                    )
+                    return
+                session_id = secrets.token_urlsafe(32)
+                sessions[session_id] = {"username": operator["username"]}
+                self._send_json(
+                    HTTPStatus.OK,
+                    {"operator": operator},
+                    cookies=[_build_session_cookie("icsmog_session", session_id)],
+                )
+                return
+
+            if path == "/cybersecurity/logout":
+                session_id = self._get_session_id()
+                if session_id is not None:
+                    sessions.pop(session_id, None)
+                self._send_json(
+                    HTTPStatus.OK,
+                    {"status": "logged_out"},
+                    cookies=[_build_session_cookie("icsmog_session", "", max_age=0)],
+                )
+                return
 
             if path.startswith("/cybersecurity/alerts/") and path.endswith(
                 "/acknowledge"
@@ -323,11 +362,18 @@ def build_handler(
                 return {}, "Request body must be a JSON object"
             return payload, None
 
-        def _send_json(self, status: HTTPStatus, payload: Dict[str, Any]) -> None:
+        def _send_json(
+            self,
+            status: HTTPStatus,
+            payload: Dict[str, Any],
+            cookies: list[str] | None = None,
+        ) -> None:
             body = json.dumps(payload, indent=2).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
+            for cookie in cookies or []:
+                self.send_header("Set-Cookie", cookie)
             self.end_headers()
             self.wfile.write(body)
 
@@ -343,6 +389,12 @@ def build_handler(
             self,
             required_permission: str | None = None,
         ) -> Dict[str, Any] | None:
+            session_id = self._get_session_id()
+            if session_id is not None:
+                return self._authenticate_session(
+                    session_id,
+                    required_permission=required_permission,
+                )
             operator_name = self.headers.get("X-Operator-Name", "").strip()
             operator_key = self.headers.get("X-Operator-Key", "")
             if not operator_name:
@@ -370,6 +422,50 @@ def build_handler(
                 )
                 return None
 
+        def _authenticate_session(
+            self,
+            session_id: str,
+            required_permission: str | None = None,
+        ) -> Dict[str, Any] | None:
+            session = sessions.get(session_id)
+            if session is None:
+                self._send_json(
+                    HTTPStatus.UNAUTHORIZED,
+                    {"error": "Session expired. Sign in again."},
+                    cookies=[_build_session_cookie("icsmog_session", "", max_age=0)],
+                )
+                return None
+            try:
+                return service.authorize_operator(
+                    str(session["username"]),
+                    required_permission=required_permission,
+                )
+            except PermissionError as exc:
+                self._send_json(
+                    HTTPStatus.FORBIDDEN,
+                    {"error": str(exc)},
+                )
+                return None
+            except ValueError:
+                sessions.pop(session_id, None)
+                self._send_json(
+                    HTTPStatus.UNAUTHORIZED,
+                    {"error": "Session expired. Sign in again."},
+                    cookies=[_build_session_cookie("icsmog_session", "", max_age=0)],
+                )
+                return None
+
+        def _get_session_id(self) -> str | None:
+            raw_cookie = self.headers.get("Cookie")
+            if not raw_cookie:
+                return None
+            cookie = SimpleCookie()
+            cookie.load(raw_cookie)
+            morsel = cookie.get("icsmog_session")
+            if morsel is None or not morsel.value:
+                return None
+            return morsel.value
+
     return CybersecurityAPIHandler
 
 
@@ -389,3 +485,14 @@ def _get_query_int(query: Dict[str, list[str]], key: str) -> int | None:
     except ValueError as exc:
         raise ValueError(f"Query parameter '{key}' must be an integer") from exc
     return parsed if parsed > 0 else None
+
+
+def _build_session_cookie(name: str, value: str, max_age: int | None = None) -> str:
+    cookie = SimpleCookie()
+    cookie[name] = value
+    cookie[name]["path"] = "/"
+    cookie[name]["httponly"] = True
+    cookie[name]["samesite"] = "Lax"
+    if max_age is not None:
+        cookie[name]["max-age"] = str(max_age)
+    return cookie.output(header="").strip()

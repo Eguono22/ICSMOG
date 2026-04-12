@@ -171,6 +171,8 @@ Example endpoints:
 - `GET /cybersecurity/audit-log`
 - `GET /cybersecurity/me`
 - `GET /cybersecurity/operators`
+- `POST /cybersecurity/login`
+- `POST /cybersecurity/logout`
 - `POST /cybersecurity/alerts/<alert_id>/acknowledge`
 - `POST /cybersecurity/alerts/<alert_id>/resolve`
 - `POST /cybersecurity/operators`
@@ -204,6 +206,11 @@ headers. The default bootstrap accounts are:
 
 Analysts can import CSV data and acknowledge alerts. Admins can also resolve
 alerts and manage operator accounts through the API or dashboard.
+
+The browser dashboard now supports session-based sign-in through
+`POST /cybersecurity/login` and `POST /cybersecurity/logout`, so operators do not
+need to resend raw credentials on every protected action. Header-based
+authentication still works for scripts and test automation.
 
 ## Example Direction
 

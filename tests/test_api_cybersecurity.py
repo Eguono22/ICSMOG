@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import threading
 import tempfile
+import http.cookiejar
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
@@ -57,6 +58,22 @@ def _read_json(
         return json.loads(response.read().decode("utf-8"))
 
 
+def _read_json_with_opener(
+    opener: urllib.request.OpenerDirector,
+    url: str,
+    method: str = "GET",
+    payload: dict | None = None,
+) -> tuple[dict, object]:
+    data = None
+    headers = {}
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(url, data=data, headers=headers, method=method)
+    with opener.open(request) as response:
+        return json.loads(response.read().decode("utf-8")), response
+
+
 def test_health_endpoint_returns_ok():
     server, thread = _start_test_server()
     try:
@@ -87,6 +104,7 @@ def test_dashboard_page_renders_html():
     assert "ICSMOG Security Console" in html
     assert "Operator Controls" in html
     assert "Operator Directory" in html
+    assert "Sign In" in html
     assert "text/html" in content_type
 
 
@@ -463,6 +481,97 @@ def test_protected_operator_actions_require_credentials():
         thread.join(timeout=5)
 
     assert "X-Operator-Name" in error_payload["error"]
+
+
+def test_login_endpoint_sets_session_cookie_for_browser_flow():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        server, thread = _start_test_server(
+            CybersecurityMonitoringService(
+                store=CybersecurityEventStore(f"{temp_dir}/cybersecurity.db")
+            )
+        )
+        base_url = f"http://127.0.0.1:{server.server_address[1]}"
+        jar = http.cookiejar.CookieJar()
+        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+        try:
+            login_payload, login_response = _read_json_with_opener(
+                opener,
+                f"{base_url}/cybersecurity/login",
+                method="POST",
+                payload={
+                    "username": "analyst-1",
+                    "api_key": "icsmog-demo-key",
+                },
+            )
+            me_payload, _ = _read_json_with_opener(
+                opener,
+                f"{base_url}/cybersecurity/me",
+            )
+            import_payload, _ = _read_json_with_opener(
+                opener,
+                f"{base_url}/cybersecurity/import/network-csv",
+                method="POST",
+                payload={
+                    "csv_text": (
+                        "source_ip,destination_ip,port,protocol,payload_size\n"
+                        "198.51.100.82,10.0.0.82,22,SSH,150\n"
+                    )
+                },
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    assert login_payload["operator"]["username"] == "analyst-1"
+    assert "icsmog_session=" in login_response.headers.get("Set-Cookie", "")
+    assert me_payload["operator"]["role"] == "analyst"
+    assert import_payload["operator_name"] == "analyst-1"
+
+
+def test_logout_endpoint_clears_cookie_session():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        server, thread = _start_test_server(
+            CybersecurityMonitoringService(
+                store=CybersecurityEventStore(f"{temp_dir}/cybersecurity.db")
+            )
+        )
+        base_url = f"http://127.0.0.1:{server.server_address[1]}"
+        jar = http.cookiejar.CookieJar()
+        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+        try:
+            _read_json_with_opener(
+                opener,
+                f"{base_url}/cybersecurity/login",
+                method="POST",
+                payload={
+                    "username": "admin",
+                    "api_key": "icsmog-admin-key",
+                },
+            )
+            logout_payload, logout_response = _read_json_with_opener(
+                opener,
+                f"{base_url}/cybersecurity/logout",
+                method="POST",
+                payload={},
+            )
+            request = urllib.request.Request(
+                f"{base_url}/cybersecurity/me",
+                method="GET",
+            )
+            try:
+                opener.open(request)
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 401
+                me_error = json.loads(exc.read().decode("utf-8"))
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    assert logout_payload["status"] == "logged_out"
+    assert "Max-Age=0" in logout_response.headers.get("Set-Cookie", "")
+    assert "X-Operator-Name" in me_error["error"]
 
 
 def test_analyst_cannot_resolve_alert():

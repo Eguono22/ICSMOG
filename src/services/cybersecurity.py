@@ -291,6 +291,31 @@ class CybersecurityMonitoringService:
             "updated_at": account.get("updated_at"),
         }
 
+    def authorize_operator(
+        self,
+        username: str,
+        required_permission: str | None = None,
+    ) -> Dict[str, Any]:
+        normalized_username = _normalize_operator_name(username)
+        account = self._get_operator_account(normalized_username)
+        if account is None:
+            raise ValueError("Operator account was not found")
+        if not account["is_active"]:
+            raise ValueError("Operator account is inactive")
+        if required_permission is not None:
+            if required_permission not in ROLE_PERMISSIONS.get(str(account["role"]), set()):
+                raise PermissionError(
+                    f"Operator role '{account['role']}' cannot perform '{required_permission}'"
+                )
+        return {
+            "username": account["username"],
+            "role": account["role"],
+            "is_active": account["is_active"],
+            "created_by": account.get("created_by"),
+            "created_at": account.get("created_at"),
+            "updated_at": account.get("updated_at"),
+        }
+
     def list_operator_accounts(self) -> List[Dict[str, Any]]:
         if self.store is not None:
             return self.store.list_operator_accounts()

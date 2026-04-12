@@ -709,6 +709,16 @@ def render_dashboard_html() -> str:
             </div>
           </div>
           <div class="operator-badge" id="auth-summary">Authentication not checked yet. Bootstrap accounts: analyst-1 and admin.</div>
+          <div class="operator-actions">
+            <button class="primary" id="login-operator" type="button">
+              <span class="button-title">Sign In</span>
+              <span class="button-copy">Create a browser session for protected operator actions.</span>
+            </button>
+            <button class="secondary" id="logout-operator" type="button">
+              <span class="button-title">Sign Out</span>
+              <span class="button-copy">Clear the current browser session and return to view-only mode.</span>
+            </button>
+          </div>
           <div class="operator-grid">
             <div class="operator-field">
               <label for="import-target">Import Target</label>
@@ -866,6 +876,7 @@ def render_dashboard_html() -> str:
         ...(options.headers || {}),
       };
       const response = await fetch(path, {
+        credentials: "same-origin",
         ...options,
         headers,
       });
@@ -1094,43 +1105,57 @@ def render_dashboard_html() -> str:
 
     function loadOperatorCredentials() {
       document.getElementById("operator-name").value = localStorage.getItem("icsmog.operatorName") || "";
-      document.getElementById("operator-key").value = localStorage.getItem("icsmog.operatorKey") || "icsmog-demo-key";
+      document.getElementById("operator-key").value = "";
     }
 
     function persistOperatorCredentials() {
       localStorage.setItem("icsmog.operatorName", document.getElementById("operator-name").value.trim());
-      localStorage.setItem("icsmog.operatorKey", document.getElementById("operator-key").value);
     }
 
-    function getOperatorHeaders() {
-      const operatorName = document.getElementById("operator-name").value.trim();
-      const operatorKey = document.getElementById("operator-key").value;
-      if (!operatorName) {
-        throw new Error("Operator name is required for protected actions.");
+    async function loginOperator() {
+      const username = document.getElementById("operator-name").value.trim();
+      const apiKey = document.getElementById("operator-key").value;
+      if (!username) {
+        throw new Error("Operator name is required to sign in.");
       }
-      if (!operatorKey) {
-        throw new Error("Operator key is required for protected actions.");
+      if (!apiKey) {
+        throw new Error("Operator key is required to sign in.");
       }
       persistOperatorCredentials();
-      return {
-        "X-Operator-Name": operatorName,
-        "X-Operator-Key": operatorKey,
-      };
+      const payload = await fetchJson("/cybersecurity/login", {
+        method: "POST",
+        body: JSON.stringify({
+          username,
+          api_key: apiKey,
+        }),
+      });
+      document.getElementById("operator-key").value = "";
+      return payload.operator;
+    }
+
+    async function logoutOperator() {
+      await fetchJson("/cybersecurity/logout", {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      document.getElementById("operator-key").value = "";
+      dashboardState.operatorProfile = null;
+      dashboardState.operators = [];
+      document.getElementById("auth-summary").textContent =
+        "Signed out. Use a bootstrap or admin account to create a new browser session.";
+      setDirectoryStatus("Signed out. Admin access is required to manage operators.");
+      renderOperators();
     }
 
     async function refreshOperatorContext() {
       try {
-        const operatorPayload = await fetchJson("/cybersecurity/me", {
-          headers: getOperatorHeaders(),
-        });
+        const operatorPayload = await fetchJson("/cybersecurity/me");
         dashboardState.operatorProfile = operatorPayload.operator || null;
         document.getElementById("auth-summary").textContent =
           `Authenticated as ${operatorPayload.operator.username} with role ${operatorPayload.operator.role}. Analysts can import and acknowledge alerts; admins can also resolve alerts and manage operators.`;
 
         if (operatorPayload.operator.role === "admin") {
-          const directoryPayload = await fetchJson("/cybersecurity/operators", {
-            headers: getOperatorHeaders(),
-          });
+          const directoryPayload = await fetchJson("/cybersecurity/operators");
           dashboardState.operators = directoryPayload.operators || [];
           setDirectoryStatus(
             `Directory loaded for admin ${operatorPayload.operator.username}.`,
@@ -1146,8 +1171,8 @@ def render_dashboard_html() -> str:
         dashboardState.operatorProfile = null;
         dashboardState.operators = [];
         document.getElementById("auth-summary").textContent =
-          "Provide valid operator credentials to load your role and available permissions.";
-        setDirectoryStatus(error.message, "error");
+          "Sign in to unlock protected imports, alert actions, and admin workflows.";
+        setDirectoryStatus("Sign in as an admin to manage operator accounts.");
       }
 
       renderOperators();
@@ -1233,7 +1258,6 @@ def render_dashboard_html() -> str:
       setOperatorStatus(`Importing ${target} CSV payload...`);
       const result = await fetchJson(`/cybersecurity/import/${target}-csv`, {
         method: "POST",
-        headers: getOperatorHeaders(),
         body: JSON.stringify({ csv_text: csvText }),
       });
       setOperatorStatus(
@@ -1254,7 +1278,6 @@ def render_dashboard_html() -> str:
       setDirectoryStatus(`Creating operator ${payload.username || "account"}...`);
       const result = await fetchJson("/cybersecurity/operators", {
         method: "POST",
-        headers: getOperatorHeaders(),
         body: JSON.stringify(payload),
       });
       document.getElementById("new-operator-name").value = "";
@@ -1332,6 +1355,31 @@ def render_dashboard_html() -> str:
       });
     });
 
+    document.getElementById("login-operator").addEventListener("click", () => {
+      setOperatorStatus("Signing in...");
+      loginOperator()
+        .then((operator) => {
+          setOperatorStatus(
+            `Signed in as ${operator.username} with role ${operator.role}.`,
+            "success"
+          );
+          return refreshOperatorContext();
+        })
+        .catch((error) => {
+          setOperatorStatus(error.message, "error");
+        });
+    });
+
+    document.getElementById("logout-operator").addEventListener("click", () => {
+      logoutOperator()
+        .then(() => {
+          setOperatorStatus("Signed out of the browser session.");
+        })
+        .catch((error) => {
+          setOperatorStatus(error.message, "error");
+        });
+    });
+
     document.getElementById("create-operator").addEventListener("click", () => {
       createOperatorAccount().catch((error) => {
         setDirectoryStatus(error.message, "error");
@@ -1345,10 +1393,6 @@ def render_dashboard_html() -> str:
     });
 
     document.getElementById("operator-name").addEventListener("input", () => {
-      persistOperatorCredentials();
-    });
-
-    document.getElementById("operator-key").addEventListener("input", () => {
       persistOperatorCredentials();
     });
 
@@ -1569,7 +1613,7 @@ def render_alert_detail_html(alert_id: str) -> str:
       <div class="credential-grid">
         <div class="field">
           <label for="operator-name">Operator Name</label>
-          <input id="operator-name" type="text" placeholder="SOC analyst">
+          <input id="operator-name" type="text" placeholder="analyst-1">
         </div>
         <div class="field">
           <label for="operator-key">Operator Key</label>
@@ -1577,6 +1621,8 @@ def render_alert_detail_html(alert_id: str) -> str:
         </div>
       </div>
       <div class="action-bar">
+        <button class="action-button secondary" id="login-button" type="button">Sign In</button>
+        <button class="action-button secondary" id="logout-button" type="button">Sign Out</button>
         <button class="action-button secondary" id="acknowledge-button" type="button">Acknowledge</button>
         <button class="action-button" id="resolve-button" type="button">Resolve</button>
       </div>
@@ -1598,28 +1644,53 @@ def render_alert_detail_html(alert_id: str) -> str:
 
     function loadOperatorCredentials() {{
       document.getElementById("operator-name").value = localStorage.getItem("icsmog.operatorName") || "";
-      document.getElementById("operator-key").value = localStorage.getItem("icsmog.operatorKey") || "icsmog-demo-key";
+      document.getElementById("operator-key").value = "";
     }}
 
     function persistOperatorCredentials() {{
       localStorage.setItem("icsmog.operatorName", document.getElementById("operator-name").value.trim());
-      localStorage.setItem("icsmog.operatorKey", document.getElementById("operator-key").value);
     }}
 
-    function getOperatorHeaders() {{
-      const operatorName = document.getElementById("operator-name").value.trim();
-      const operatorKey = document.getElementById("operator-key").value;
-      if (!operatorName) {{
-        throw new Error("Operator name is required for alert actions.");
+    async function loginOperator() {{
+      const username = document.getElementById("operator-name").value.trim();
+      const apiKey = document.getElementById("operator-key").value;
+      if (!username) {{
+        throw new Error("Operator name is required to sign in.");
       }}
-      if (!operatorKey) {{
-        throw new Error("Operator key is required for alert actions.");
+      if (!apiKey) {{
+        throw new Error("Operator key is required to sign in.");
       }}
       persistOperatorCredentials();
-      return {{
-        "X-Operator-Name": operatorName,
-        "X-Operator-Key": operatorKey,
-      }};
+      const response = await fetch("/cybersecurity/login", {{
+        method: "POST",
+        credentials: "same-origin",
+        headers: {{ "Content-Type": "application/json" }},
+        body: JSON.stringify({{
+          username,
+          api_key: apiKey,
+        }}),
+      }});
+      const payload = await response.json();
+      if (!response.ok) {{
+        throw new Error(payload.error || "Unable to sign in");
+      }}
+      document.getElementById("operator-key").value = "";
+      return payload.operator;
+    }}
+
+    async function logoutOperator() {{
+      const response = await fetch("/cybersecurity/logout", {{
+        method: "POST",
+        credentials: "same-origin",
+        headers: {{ "Content-Type": "application/json" }},
+        body: JSON.stringify({{}}),
+      }});
+      const payload = await response.json();
+      if (!response.ok) {{
+        throw new Error(payload.error || "Unable to sign out");
+      }}
+      document.getElementById("operator-key").value = "";
+      return payload;
     }}
 
     async function loadAlert() {{
@@ -1664,10 +1735,9 @@ def render_alert_detail_html(alert_id: str) -> str:
     }}
 
     async function applyAction(action) {{
-      const operatorHeaders = getOperatorHeaders();
       const response = await fetch(`/cybersecurity/alerts/${{encodeURIComponent(alertId)}}/${{action}}`, {{
         method: "POST",
-        headers: operatorHeaders,
+        credentials: "same-origin",
       }});
       const payload = await response.json();
       if (!response.ok) {{
@@ -1706,8 +1776,26 @@ def render_alert_detail_html(alert_id: str) -> str:
       persistOperatorCredentials();
     }});
 
-    document.getElementById("operator-key").addEventListener("input", () => {{
-      persistOperatorCredentials();
+    document.getElementById("login-button").addEventListener("click", () => {{
+      loginOperator()
+        .then((operator) => {{
+          document.getElementById("action-status").textContent =
+            `Signed in as ${{operator.username}} with role ${{operator.role}}.`;
+        }})
+        .catch((error) => {{
+          document.getElementById("action-status").textContent = error.message;
+        }});
+    }});
+
+    document.getElementById("logout-button").addEventListener("click", () => {{
+      logoutOperator()
+        .then(() => {{
+          document.getElementById("action-status").textContent =
+            "Signed out of the browser session.";
+        }})
+        .catch((error) => {{
+          document.getElementById("action-status").textContent = error.message;
+        }});
     }});
 
     document.getElementById("acknowledge-button").addEventListener("click", () => {{
