@@ -221,3 +221,28 @@ def test_service_records_operator_audit_history():
 
     assert audit_log[0]["operator_name"] == "soc-lead"
     assert history[0]["operator_name"] == "soc-lead"
+
+
+def test_service_bootstraps_and_creates_operator_accounts():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        store = CybersecurityEventStore(f"{temp_dir}/cybersecurity.db")
+        service = CybersecurityMonitoringService(store=store)
+
+        analyst = service.authenticate_operator(
+            "analyst-1",
+            "icsmog-demo-key",
+            required_permission="import_csv",
+        )
+        created = service.create_operator_account(
+            {
+                "username": "tier2-analyst",
+                "api_key": "tier2-secret",
+                "role": "analyst",
+            },
+            created_by="admin",
+        )
+        operators = service.list_operator_accounts()
+
+    assert analyst["role"] == "analyst"
+    assert created["username"] == "tier2-analyst"
+    assert any(operator["username"] == "tier2-analyst" for operator in operators)

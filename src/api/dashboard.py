@@ -376,6 +376,17 @@ def render_dashboard_html() -> str:
       color: var(--signal);
     }
 
+    .operator-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      border-radius: 16px;
+      background: rgba(21, 35, 45, 0.06);
+      color: var(--ink);
+      font-size: 13px;
+    }
+
     .status-pill {
       padding: 8px 12px;
       border-radius: 999px;
@@ -690,13 +701,14 @@ def render_dashboard_html() -> str:
           <div class="operator-grid">
             <div class="operator-field">
               <label for="operator-name">Operator Name</label>
-              <input id="operator-name" type="text" placeholder="SOC analyst">
+              <input id="operator-name" type="text" placeholder="analyst-1">
             </div>
             <div class="operator-field">
               <label for="operator-key">Operator Key</label>
               <input id="operator-key" type="password" placeholder="icsmog-demo-key">
             </div>
           </div>
+          <div class="operator-badge" id="auth-summary">Authentication not checked yet. Bootstrap accounts: analyst-1 and admin.</div>
           <div class="operator-grid">
             <div class="operator-field">
               <label for="import-target">Import Target</label>
@@ -753,6 +765,59 @@ def render_dashboard_html() -> str:
       <article class="panel">
         <div class="panel-topline">
           <div>
+            <h2>Operator Directory</h2>
+            <p class="panel-copy">Admins can create and review local operator accounts without leaving the dashboard.</p>
+          </div>
+        </div>
+        <div class="operator-controls">
+          <div class="operator-grid">
+            <div class="operator-field">
+              <label for="new-operator-name">New Username</label>
+              <input id="new-operator-name" type="text" placeholder="tier2-analyst">
+            </div>
+            <div class="operator-field">
+              <label for="new-operator-key">New API Key</label>
+              <input id="new-operator-key" type="password" placeholder="operator-secret">
+            </div>
+          </div>
+          <div class="operator-grid">
+            <div class="operator-field">
+              <label for="new-operator-role">Role</label>
+              <select id="new-operator-role">
+                <option value="analyst">Analyst</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            <div class="operator-field">
+              <label for="new-operator-active">Account Status</label>
+              <select id="new-operator-active">
+                <option value="true">Active</option>
+                <option value="false">Inactive</option>
+              </select>
+            </div>
+          </div>
+          <div class="operator-actions">
+            <button class="primary" id="create-operator" type="button">
+              <span class="button-title">Create Operator</span>
+              <span class="button-copy">Requires admin credentials and creates a persisted account.</span>
+            </button>
+            <button class="secondary" id="refresh-operators" type="button">
+              <span class="button-title">Refresh Directory</span>
+              <span class="button-copy">Reload the current operator role and directory data.</span>
+            </button>
+          </div>
+          <div class="operator-status" id="directory-status">Sign in as an admin to manage operator accounts.</div>
+          <div class="stack" id="operators-list">
+            <div class="empty-state">No operator directory loaded yet.</div>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section class="history-grid single-panel fade-up">
+      <article class="panel">
+        <div class="panel-topline">
+          <div>
             <h2>Audit Trail</h2>
             <p class="panel-copy">Protected operator actions are recorded here so import and alert decisions stay attributable.</p>
           </div>
@@ -771,6 +836,8 @@ def render_dashboard_html() -> str:
       triggeredRules: [],
       imports: [],
       auditLog: [],
+      operatorProfile: null,
+      operators: [],
       filters: {
         threatLevel: "",
         status: "",
@@ -842,6 +909,7 @@ def render_dashboard_html() -> str:
       renderRules();
       renderImportHistory();
       renderAuditLog();
+      renderOperators();
     }
 
     function renderMetrics() {
@@ -979,12 +1047,47 @@ def render_dashboard_html() -> str:
         .join("");
     }
 
+    function renderOperators() {
+      const container = document.getElementById("operators-list");
+      if (!dashboardState.operatorProfile) {
+        container.innerHTML = '<div class="empty-state">Authenticate to load operator account details.</div>';
+        return;
+      }
+      if (dashboardState.operatorProfile.role !== "admin") {
+        container.innerHTML = '<div class="empty-state">Signed in successfully, but only admins can view the operator directory.</div>';
+        return;
+      }
+      if (!dashboardState.operators.length) {
+        container.innerHTML = '<div class="empty-state">No operator accounts are available.</div>';
+        return;
+      }
+
+      container.innerHTML = dashboardState.operators
+        .map((operator) => `
+          <article class="history-card">
+            <div class="alert-head">
+              <div class="alert-title">${escapeHtml(operator.username)}</div>
+              <span class="tag ${operator.is_active ? "success" : "failed"}">${operator.is_active ? "active" : "inactive"}</span>
+            </div>
+            <div class="muted">Role ${escapeHtml(operator.role)} | Created by ${escapeHtml(operator.created_by || "system")}</div>
+            <div class="muted">Updated ${formatTimestamp(operator.updated_at)}</div>
+          </article>
+        `)
+        .join("");
+    }
+
     function setStatus(label) {
       document.getElementById("status-text").textContent = label;
     }
 
     function setOperatorStatus(message, tone = "") {
       const node = document.getElementById("operator-status");
+      node.textContent = message;
+      node.className = tone ? `operator-status ${tone}` : "operator-status";
+    }
+
+    function setDirectoryStatus(message, tone = "") {
+      const node = document.getElementById("directory-status");
       node.textContent = message;
       node.className = tone ? `operator-status ${tone}` : "operator-status";
     }
@@ -1013,6 +1116,41 @@ def render_dashboard_html() -> str:
         "X-Operator-Name": operatorName,
         "X-Operator-Key": operatorKey,
       };
+    }
+
+    async function refreshOperatorContext() {
+      try {
+        const operatorPayload = await fetchJson("/cybersecurity/me", {
+          headers: getOperatorHeaders(),
+        });
+        dashboardState.operatorProfile = operatorPayload.operator || null;
+        document.getElementById("auth-summary").textContent =
+          `Authenticated as ${operatorPayload.operator.username} with role ${operatorPayload.operator.role}. Analysts can import and acknowledge alerts; admins can also resolve alerts and manage operators.`;
+
+        if (operatorPayload.operator.role === "admin") {
+          const directoryPayload = await fetchJson("/cybersecurity/operators", {
+            headers: getOperatorHeaders(),
+          });
+          dashboardState.operators = directoryPayload.operators || [];
+          setDirectoryStatus(
+            `Directory loaded for admin ${operatorPayload.operator.username}.`,
+            "success"
+          );
+        } else {
+          dashboardState.operators = [];
+          setDirectoryStatus(
+            `Signed in as ${operatorPayload.operator.username}. Admin credentials are required to manage operators.`
+          );
+        }
+      } catch (error) {
+        dashboardState.operatorProfile = null;
+        dashboardState.operators = [];
+        document.getElementById("auth-summary").textContent =
+          "Provide valid operator credentials to load your role and available permissions.";
+        setDirectoryStatus(error.message, "error");
+      }
+
+      renderOperators();
     }
 
     function buildAlertEndpoint() {
@@ -1103,6 +1241,31 @@ def render_dashboard_html() -> str:
         "success"
       );
       await refreshDashboard();
+      await refreshOperatorContext();
+    }
+
+    async function createOperatorAccount() {
+      const payload = {
+        username: document.getElementById("new-operator-name").value.trim(),
+        api_key: document.getElementById("new-operator-key").value,
+        role: document.getElementById("new-operator-role").value,
+        is_active: document.getElementById("new-operator-active").value === "true",
+      };
+      setDirectoryStatus(`Creating operator ${payload.username || "account"}...`);
+      const result = await fetchJson("/cybersecurity/operators", {
+        method: "POST",
+        headers: getOperatorHeaders(),
+        body: JSON.stringify(payload),
+      });
+      document.getElementById("new-operator-name").value = "";
+      document.getElementById("new-operator-key").value = "";
+      document.getElementById("new-operator-role").value = "analyst";
+      document.getElementById("new-operator-active").value = "true";
+      setDirectoryStatus(
+        `Created operator ${result.username} with role ${result.role}.`,
+        "success"
+      );
+      await refreshOperatorContext();
     }
 
     function formatTimestamp(value) {
@@ -1169,6 +1332,18 @@ def render_dashboard_html() -> str:
       });
     });
 
+    document.getElementById("create-operator").addEventListener("click", () => {
+      createOperatorAccount().catch((error) => {
+        setDirectoryStatus(error.message, "error");
+      });
+    });
+
+    document.getElementById("refresh-operators").addEventListener("click", () => {
+      refreshOperatorContext().catch((error) => {
+        setDirectoryStatus(error.message, "error");
+      });
+    });
+
     document.getElementById("operator-name").addEventListener("input", () => {
       persistOperatorCredentials();
     });
@@ -1180,7 +1355,9 @@ def render_dashboard_html() -> str:
     loadOperatorCredentials();
     applyImportTemplate();
     refreshDashboard();
+    refreshOperatorContext();
     setInterval(refreshDashboard, 8000);
+    setInterval(refreshOperatorContext, 12000);
   </script>
 </body>
 </html>

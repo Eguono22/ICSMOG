@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import datetime
-import hashlib
 import csv
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -22,6 +22,16 @@ from src.cybersecurity.siem import (
 )
 from src.storage import CybersecurityEventStore
 
+ROLE_PERMISSIONS = {
+    "analyst": {"import_csv", "acknowledge_alert"},
+    "admin": {
+        "import_csv",
+        "acknowledge_alert",
+        "resolve_alert",
+        "manage_operators",
+    },
+}
+
 
 class CybersecurityMonitoringService:
     """Stateful service for ingesting events and querying current security state."""
@@ -35,6 +45,9 @@ class CybersecurityMonitoringService:
         self.ips = ips or IntrusionPreventionSystem()
         self.siem = siem or SecurityInformationEventManagement()
         self.store = store
+        self._memory_operator_accounts = (
+            {} if store is not None else _build_default_operator_accounts()
+        )
         self._rehydrate_from_store()
 
     def ingest_network_events(self, events: Iterable[NetworkEvent]) -> Dict[str, Any]:
@@ -248,6 +261,104 @@ class CybersecurityMonitoringService:
             return []
         return self.store.load_audit_log(limit=limit)
 
+    def authenticate_operator(
+        self,
+        username: str,
+        api_key: str,
+        required_permission: str | None = None,
+    ) -> Dict[str, Any]:
+        normalized_username = _normalize_operator_name(username)
+        if not str(api_key):
+            raise ValueError("operator_key is required")
+        account = self._get_operator_account(normalized_username)
+        if account is None:
+            raise ValueError("Operator account was not found")
+        if not account["is_active"]:
+            raise ValueError("Operator account is inactive")
+        if account["api_key_hash"] != _hash_api_key(str(api_key)):
+            raise ValueError("Invalid operator credentials")
+        if required_permission is not None:
+            if required_permission not in ROLE_PERMISSIONS.get(str(account["role"]), set()):
+                raise PermissionError(
+                    f"Operator role '{account['role']}' cannot perform '{required_permission}'"
+                )
+        return {
+            "username": account["username"],
+            "role": account["role"],
+            "is_active": account["is_active"],
+            "created_by": account.get("created_by"),
+            "created_at": account.get("created_at"),
+            "updated_at": account.get("updated_at"),
+        }
+
+    def list_operator_accounts(self) -> List[Dict[str, Any]]:
+        if self.store is not None:
+            return self.store.list_operator_accounts()
+        return [
+            {
+                "username": username,
+                "role": account["role"],
+                "is_active": account["is_active"],
+                "created_by": account.get("created_by"),
+                "created_at": account.get("created_at"),
+                "updated_at": account.get("updated_at"),
+            }
+            for username, account in sorted(self._memory_operator_accounts.items())
+        ]
+
+    def create_operator_account(
+        self,
+        payload: Dict[str, Any],
+        created_by: str,
+    ) -> Dict[str, Any]:
+        username = _normalize_operator_name(payload.get("username", ""))
+        api_key = str(payload.get("api_key", "")).strip()
+        role = str(payload.get("role", "")).strip().lower()
+        is_active = bool(payload.get("is_active", True))
+        if not api_key:
+            raise ValueError("api_key is required")
+        if role not in ROLE_PERMISSIONS:
+            raise ValueError(
+                "role must be one of: " + ", ".join(sorted(ROLE_PERMISSIONS))
+            )
+        if self.store is not None:
+            self.store.upsert_operator_account(
+                username=username,
+                api_key=api_key,
+                role=role,
+                is_active=is_active,
+                created_by=created_by,
+            )
+            self.store.record_audit_event(
+                operator_name=created_by,
+                action_type="create_operator_account",
+                target=username,
+                status="success",
+                details={"role": role, "is_active": is_active},
+            )
+            created = self.store.get_operator_account(username)
+        else:
+            created = {
+                "username": username,
+                "api_key_hash": _hash_api_key(api_key),
+                "role": role,
+                "is_active": is_active,
+                "created_by": created_by,
+                "created_at": datetime.datetime.now(datetime.UTC).isoformat(),
+                "updated_at": datetime.datetime.now(datetime.UTC).isoformat(),
+            }
+            self._memory_operator_accounts[username] = created
+        if created is None:
+            raise ValueError("Unable to create operator account")
+        return {
+            "username": created["username"],
+            "role": created["role"],
+            "is_active": created["is_active"],
+            "created_by": created.get("created_by"),
+            "created_at": created.get("created_at"),
+            "updated_at": created.get("updated_at"),
+        }
+
     def _ingest_network_events(
         self,
         events: List[NetworkEvent],
@@ -311,6 +422,11 @@ class CybersecurityMonitoringService:
                     if resolved_at
                     else alert.resolved_at
                 )
+
+    def _get_operator_account(self, username: str) -> Dict[str, Any] | None:
+        if self.store is not None:
+            return self.store.get_operator_account(username)
+        return self._memory_operator_accounts.get(username)
 
 
 def build_sample_network_events() -> List[NetworkEvent]:
@@ -579,6 +695,34 @@ def _normalize_operator_name(operator_name: str) -> str:
     if not normalized:
         raise ValueError("operator_name is required")
     return normalized
+
+
+def _hash_api_key(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _build_default_operator_accounts() -> Dict[str, Dict[str, Any]]:
+    now = datetime.datetime.now(datetime.UTC).isoformat()
+    return {
+        "analyst-1": {
+            "username": "analyst-1",
+            "api_key_hash": _hash_api_key("icsmog-demo-key"),
+            "role": "analyst",
+            "is_active": True,
+            "created_by": "bootstrap",
+            "created_at": now,
+            "updated_at": now,
+        },
+        "admin": {
+            "username": "admin",
+            "api_key_hash": _hash_api_key("icsmog-admin-key"),
+            "role": "admin",
+            "is_active": True,
+            "created_by": "bootstrap",
+            "created_at": now,
+            "updated_at": now,
+        },
+    }
 
 
 def _serialize_alert(alert: Alert) -> Dict[str, Any]:

@@ -13,9 +13,14 @@ from src.api.cybersecurity import build_handler
 from src.services.cybersecurity import CybersecurityMonitoringService
 from src.storage import CybersecurityEventStore
 
-OPERATOR_HEADERS = {
+ANALYST_HEADERS = {
     "X-Operator-Name": "analyst-1",
     "X-Operator-Key": "icsmog-demo-key",
+}
+
+ADMIN_HEADERS = {
+    "X-Operator-Name": "admin",
+    "X-Operator-Key": "icsmog-admin-key",
 }
 
 
@@ -81,6 +86,7 @@ def test_dashboard_page_renders_html():
 
     assert "ICSMOG Security Console" in html
     assert "Operator Controls" in html
+    assert "Operator Directory" in html
     assert "text/html" in content_type
 
 
@@ -283,13 +289,13 @@ def test_alert_lifecycle_endpoints_update_status():
                 f"{base_url}/cybersecurity/alerts/{alert_id}/acknowledge",
                 method="POST",
                 payload={},
-                headers=OPERATOR_HEADERS,
+                headers=ANALYST_HEADERS,
             )
             resolved = _read_json(
                 f"{base_url}/cybersecurity/alerts/{alert_id}/resolve",
                 method="POST",
                 payload={},
-                headers=OPERATOR_HEADERS,
+                headers=ADMIN_HEADERS,
             )
             audit_log = _read_json(f"{base_url}/cybersecurity/audit-log?limit=5")
         finally:
@@ -300,9 +306,10 @@ def test_alert_lifecycle_endpoints_update_status():
     assert acknowledged["status"] == "acknowledged"
     assert acknowledged["updated_by"] == "analyst-1"
     assert resolved["status"] == "resolved"
+    assert resolved["updated_by"] == "admin"
     assert resolved["resolved_at"] is not None
     assert audit_log["audit_log"][0]["action_type"] == "resolve_alert"
-    assert audit_log["audit_log"][0]["operator_name"] == "analyst-1"
+    assert audit_log["audit_log"][0]["operator_name"] == "admin"
 
 
 def test_network_csv_import_endpoint_accepts_inline_csv():
@@ -319,7 +326,7 @@ def test_network_csv_import_endpoint_accepts_inline_csv():
                     "198.51.100.62,10.0.0.62,80,HTTP,15000\n"
                 )
             },
-            headers=OPERATOR_HEADERS,
+            headers=ANALYST_HEADERS,
         )
         alerts = _read_json(f"{base_url}/cybersecurity/alerts")
     finally:
@@ -343,7 +350,7 @@ def test_security_csv_import_endpoint_accepts_file_path():
             payload={
                 "csv_path": "examples/security_events.csv"
             },
-            headers=OPERATOR_HEADERS,
+            headers=ANALYST_HEADERS,
         )
         dashboard = _read_json(f"{base_url}/cybersecurity/dashboard")
     finally:
@@ -374,7 +381,7 @@ def test_import_history_endpoint_reports_recent_imports():
                         "198.51.100.91,10.0.0.91,22,SSH,150\n"
                     )
                 },
-                headers=OPERATOR_HEADERS,
+                headers=ANALYST_HEADERS,
             )
             history = _read_json(f"{base_url}/cybersecurity/import-history?limit=5")
             audit_log = _read_json(f"{base_url}/cybersecurity/audit-log?limit=5")
@@ -407,7 +414,7 @@ def test_failed_import_is_recorded_in_import_history():
                 ).encode("utf-8"),
                 headers={
                     "Content-Type": "application/json",
-                    **OPERATOR_HEADERS,
+                    **ANALYST_HEADERS,
                 },
                 method="POST",
             )
@@ -456,3 +463,88 @@ def test_protected_operator_actions_require_credentials():
         thread.join(timeout=5)
 
     assert "X-Operator-Name" in error_payload["error"]
+
+
+def test_analyst_cannot_resolve_alert():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        server, thread = _start_test_server(
+            CybersecurityMonitoringService(
+                store=CybersecurityEventStore(f"{temp_dir}/cybersecurity.db")
+            )
+        )
+        base_url = f"http://127.0.0.1:{server.server_address[1]}"
+        try:
+            _read_json(
+                f"{base_url}/cybersecurity/network-events",
+                method="POST",
+                payload={
+                    "events": [
+                        {
+                            "source_ip": "198.51.100.42",
+                            "destination_ip": "10.0.0.52",
+                            "port": 22,
+                            "protocol": "SSH",
+                            "payload_size": 128,
+                        }
+                    ]
+                },
+            )
+            alerts = _read_json(f"{base_url}/cybersecurity/alerts")
+            alert_id = alerts["alerts"][0]["alert_id"]
+            request = urllib.request.Request(
+                f"{base_url}/cybersecurity/alerts/{alert_id}/resolve",
+                data=json.dumps({}).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    **ANALYST_HEADERS,
+                },
+                method="POST",
+            )
+            try:
+                urllib.request.urlopen(request)
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 403
+                error_payload = json.loads(exc.read().decode("utf-8"))
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    assert "cannot perform 'resolve_alert'" in error_payload["error"]
+
+
+def test_admin_can_list_and_create_operator_accounts():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        server, thread = _start_test_server(
+            CybersecurityMonitoringService(
+                store=CybersecurityEventStore(f"{temp_dir}/cybersecurity.db")
+            )
+        )
+        base_url = f"http://127.0.0.1:{server.server_address[1]}"
+        try:
+            me = _read_json(
+                f"{base_url}/cybersecurity/me",
+                headers=ADMIN_HEADERS,
+            )
+            created = _read_json(
+                f"{base_url}/cybersecurity/operators",
+                method="POST",
+                payload={
+                    "username": "tier2-admin",
+                    "api_key": "tier2-secret",
+                    "role": "admin",
+                },
+                headers=ADMIN_HEADERS,
+            )
+            operators = _read_json(
+                f"{base_url}/cybersecurity/operators",
+                headers=ADMIN_HEADERS,
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    assert me["operator"]["role"] == "admin"
+    assert created["username"] == "tier2-admin"
+    assert any(operator["username"] == "tier2-admin" for operator in operators["operators"])

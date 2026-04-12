@@ -25,7 +25,7 @@ What works well now:
 - JSON output for lightweight automation and testing
 - persistent SQLite-backed cybersecurity event history through the API
 - built-in cybersecurity dashboard served from the same API process
-- lightweight operator authentication for protected imports and alert actions
+- local operator accounts with role-based access for protected workflows
 - persistent operator audit trails for imports and alert lifecycle changes
 - unit tests covering the existing domain modules
 
@@ -33,7 +33,7 @@ What is not built yet:
 
 - real-time streaming ingestion
 - a full multi-user operations dashboard
-- full role-based access control
+- external identity integration and session-based authentication
 - production deployment workflow
 
 ## Primary Use Case
@@ -169,8 +169,11 @@ Example endpoints:
 - `GET /cybersecurity/alerts/<alert_id>`
 - `GET /cybersecurity/import-history`
 - `GET /cybersecurity/audit-log`
+- `GET /cybersecurity/me`
+- `GET /cybersecurity/operators`
 - `POST /cybersecurity/alerts/<alert_id>/acknowledge`
 - `POST /cybersecurity/alerts/<alert_id>/resolve`
+- `POST /cybersecurity/operators`
 - `POST /cybersecurity/import/network-csv`
 - `POST /cybersecurity/import/security-csv`
 - `POST /cybersecurity/network-events`
@@ -194,8 +197,13 @@ already-imported CSVs are skipped after restart unless the file contents change.
 Import history records both successful and failed CSV attempts so operators can
 review what was accepted and what was rejected.
 Protected operator actions require `X-Operator-Name` and `X-Operator-Key`
-headers. By default, the demo key is `icsmog-demo-key`, and it can be overridden
-with the `ICSMOG_OPERATOR_API_KEY` environment variable.
+headers. The default bootstrap accounts are:
+
+- `analyst-1` with key `icsmog-demo-key` and role `analyst`
+- `admin` with key `icsmog-admin-key` and role `admin`
+
+Analysts can import CSV data and acknowledge alerts. Admins can also resolve
+alerts and manage operator accounts through the API or dashboard.
 
 ## Example Direction
 
@@ -227,7 +235,7 @@ If you are evaluating ICSMOG as a future application, the most promising path is
 
 ### Later
 
-- role-based access and richer user management
+- external identity providers, session auth, and richer user management
 - streaming or scheduled ingestion
 - deployment and packaging improvements
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import hashlib
 import json
 import sqlite3
 from pathlib import Path
@@ -319,6 +320,108 @@ class CybersecurityEventStore:
             for row in rows
         ]
 
+    def upsert_operator_account(
+        self,
+        username: str,
+        api_key: str,
+        role: str,
+        is_active: bool = True,
+        created_by: str | None = None,
+    ) -> None:
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO operator_accounts (
+                    username,
+                    api_key_hash,
+                    role,
+                    is_active,
+                    created_by,
+                    created_at,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT(username) DO UPDATE SET
+                    api_key_hash = excluded.api_key_hash,
+                    role = excluded.role,
+                    is_active = excluded.is_active,
+                    created_by = COALESCE(excluded.created_by, operator_accounts.created_by),
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    username,
+                    _hash_api_key(api_key),
+                    role,
+                    1 if is_active else 0,
+                    created_by,
+                ),
+            )
+
+    def get_operator_account(self, username: str) -> dict[str, str | bool] | None:
+        with sqlite3.connect(self.db_path) as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    username,
+                    api_key_hash,
+                    role,
+                    is_active,
+                    created_by,
+                    created_at,
+                    updated_at
+                FROM operator_accounts
+                WHERE username = ?
+                """,
+                (username,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "username": row[0],
+            "api_key_hash": row[1],
+            "role": row[2],
+            "is_active": bool(row[3]),
+            "created_by": row[4],
+            "created_at": row[5],
+            "updated_at": row[6],
+        }
+
+    def list_operator_accounts(self) -> list[dict[str, str | bool | None]]:
+        with sqlite3.connect(self.db_path) as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    username,
+                    role,
+                    is_active,
+                    created_by,
+                    created_at,
+                    updated_at
+                FROM operator_accounts
+                ORDER BY username ASC
+                """
+            ).fetchall()
+        return [
+            {
+                "username": row[0],
+                "role": row[1],
+                "is_active": bool(row[2]),
+                "created_by": row[3],
+                "created_at": row[4],
+                "updated_at": row[5],
+            }
+            for row in rows
+        ]
+
+    def count_operator_accounts(self) -> int:
+        with sqlite3.connect(self.db_path) as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*)
+                FROM operator_accounts
+                """
+            ).fetchone()
+        return int(row[0]) if row is not None else 0
+
     def _initialize(self) -> None:
         with sqlite3.connect(self.db_path) as connection:
             connection.execute(
@@ -394,6 +497,19 @@ class CybersecurityEventStore:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS operator_accounts (
+                    username TEXT PRIMARY KEY,
+                    api_key_hash TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    is_active INTEGER NOT NULL DEFAULT 1,
+                    created_by TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
             columns = {
                 row[1]
                 for row in connection.execute("PRAGMA table_info(import_history)")
@@ -419,7 +535,30 @@ class CybersecurityEventStore:
                     ADD COLUMN error_message TEXT
                     """
                 )
+        self._seed_default_operator_accounts()
+
+    def _seed_default_operator_accounts(self) -> None:
+        if self.count_operator_accounts() > 0:
+            return
+        self.upsert_operator_account(
+            username="analyst-1",
+            api_key="icsmog-demo-key",
+            role="analyst",
+            is_active=True,
+            created_by="bootstrap",
+        )
+        self.upsert_operator_account(
+            username="admin",
+            api_key="icsmog-admin-key",
+            role="admin",
+            is_active=True,
+            created_by="bootstrap",
+        )
 
 
 def _parse_timestamp(value: str) -> datetime.datetime:
     return datetime.datetime.fromisoformat(value)
+
+
+def _hash_api_key(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
