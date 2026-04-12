@@ -47,3 +47,12 @@ When preparing a pull request:
 2. Make sure the test suite passes.
 3. Summarize the user-facing or developer-facing change clearly.
 4. Mention any follow-up work or known limitations.
+
+## Release Checklist
+
+Before cutting a release or merging a larger change set:
+
+1. Run `python -m ruff check .`
+2. Run `python -m pytest -p no:cacheprovider tests -v`
+3. Confirm GitHub Actions checks are green.
+4. Update `README.md` or `CONTRIBUTING.md` if setup, CLI behavior, or workflows changed.
