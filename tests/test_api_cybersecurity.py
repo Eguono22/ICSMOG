@@ -65,6 +65,7 @@ def test_dashboard_page_renders_html():
         thread.join(timeout=5)
 
     assert "ICSMOG Security Console" in html
+    assert "Operator Controls" in html
     assert "text/html" in content_type
 
 

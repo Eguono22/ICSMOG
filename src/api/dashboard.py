@@ -258,7 +258,7 @@ def render_dashboard_html() -> str:
     }
 
     .history-grid {
-      grid-template-columns: 1fr;
+      grid-template-columns: 0.95fr 1.05fr;
       margin-top: 16px;
     }
 
@@ -309,6 +309,66 @@ def render_dashboard_html() -> str:
       font: inherit;
       color: var(--ink);
       background: rgba(255, 255, 255, 0.76);
+    }
+
+    .operator-controls {
+      display: grid;
+      gap: 14px;
+    }
+
+    .operator-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .operator-field {
+      display: grid;
+      gap: 6px;
+    }
+
+    .operator-field label {
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--ink-soft);
+    }
+
+    .operator-field select,
+    .operator-field textarea {
+      width: 100%;
+      border: 1px solid rgba(21, 35, 45, 0.12);
+      border-radius: 14px;
+      padding: 11px 12px;
+      font: inherit;
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.76);
+    }
+
+    .operator-field textarea {
+      min-height: 220px;
+      resize: vertical;
+      font-family: "Consolas", "Cascadia Code", monospace;
+      line-height: 1.45;
+    }
+
+    .operator-actions {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .operator-status {
+      min-height: 22px;
+      color: var(--ink-soft);
+    }
+
+    .operator-status.error {
+      color: var(--critical);
+    }
+
+    .operator-status.success {
+      color: var(--signal);
     }
 
     .status-pill {
@@ -466,6 +526,11 @@ def render_dashboard_html() -> str:
       .metrics {
         grid-template-columns: 1fr;
       }
+
+      .history-grid,
+      .operator-grid {
+        grid-template-columns: 1fr;
+      }
     }
 
     @media (max-width: 640px) {
@@ -612,6 +677,53 @@ def render_dashboard_html() -> str:
       <article class="panel">
         <div class="panel-topline">
           <div>
+            <h2>Operator Controls</h2>
+            <p class="panel-copy">Paste inline CSV, choose the target pipeline, and trigger imports without leaving the console.</p>
+          </div>
+        </div>
+        <div class="operator-controls">
+          <div class="operator-grid">
+            <div class="operator-field">
+              <label for="import-target">Import Target</label>
+              <select id="import-target">
+                <option value="network">Network</option>
+                <option value="security">Security</option>
+              </select>
+            </div>
+            <div class="operator-field">
+              <label for="import-template">Template</label>
+              <select id="import-template">
+                <option value="blank">Blank</option>
+                <option value="network-sample">Network Sample</option>
+                <option value="security-sample">Security Sample</option>
+              </select>
+            </div>
+          </div>
+          <div class="operator-field">
+            <label for="import-editor">CSV Payload</label>
+            <textarea
+              id="import-editor"
+              spellcheck="false"
+              placeholder="Paste CSV rows here or load a sample template."
+            ></textarea>
+          </div>
+          <div class="operator-actions">
+            <button class="primary" id="run-import" type="button">
+              <span class="button-title">Run CSV Import</span>
+              <span class="button-copy">Send the current CSV payload through the selected pipeline.</span>
+            </button>
+            <button class="secondary" id="clear-import" type="button">
+              <span class="button-title">Clear Editor</span>
+              <span class="button-copy">Reset the editor so you can paste a fresh payload.</span>
+            </button>
+          </div>
+          <div class="operator-status" id="operator-status">Ready for an inline CSV import.</div>
+        </div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-topline">
+          <div>
             <h2>Import History</h2>
             <p class="panel-copy">Recent watch-folder and CSV import activity recorded in persistent storage.</p>
           </div>
@@ -634,6 +746,21 @@ def render_dashboard_html() -> str:
         status: "",
         sourceIp: "",
       },
+    };
+
+    const csvTemplates = {
+      blank: "",
+      "network-sample":
+        "source_ip,destination_ip,port,protocol,payload_size\\n" +
+        "198.51.100.70,10.0.0.70,22,SSH,180\\n" +
+        "198.51.100.71,10.0.0.71,443,TLS,1200\\n",
+      "security-sample":
+        "source,category,severity,message\\n" +
+        "auth-service,authentication,error,Login failed\\n" +
+        "auth-service,authentication,error,Login failed\\n" +
+        "auth-service,authentication,error,Login failed\\n" +
+        "auth-service,authentication,error,Login failed\\n" +
+        "auth-service,authentication,error,Login failed\\n",
     };
 
     async function fetchJson(path, options = {}) {
@@ -797,6 +924,12 @@ def render_dashboard_html() -> str:
       document.getElementById("status-text").textContent = label;
     }
 
+    function setOperatorStatus(message, tone = "") {
+      const node = document.getElementById("operator-status");
+      node.textContent = message;
+      node.className = tone ? `operator-status ${tone}` : "operator-status";
+    }
+
     function buildAlertEndpoint() {
       const params = new URLSearchParams();
       if (dashboardState.filters.threatLevel) {
@@ -845,6 +978,44 @@ def render_dashboard_html() -> str:
           })),
         }),
       });
+      await refreshDashboard();
+    }
+
+    function applyImportTemplate() {
+      const template = document.getElementById("import-template").value;
+      document.getElementById("import-editor").value = csvTemplates[template] || "";
+
+      if (template === "network-sample") {
+        document.getElementById("import-target").value = "network";
+      } else if (template === "security-sample") {
+        document.getElementById("import-target").value = "security";
+      }
+
+      setOperatorStatus(
+        template === "blank"
+          ? "Editor cleared. Paste a CSV payload or load a sample template."
+          : "Sample template loaded. Review the payload and run the import when ready."
+      );
+    }
+
+    async function runInlineImport() {
+      const target = document.getElementById("import-target").value;
+      const csvText = document.getElementById("import-editor").value.trim();
+
+      if (!csvText) {
+        setOperatorStatus("Add CSV rows before running an import.", "error");
+        return;
+      }
+
+      setOperatorStatus(`Importing ${target} CSV payload...`);
+      const result = await fetchJson(`/cybersecurity/import/${target}-csv`, {
+        method: "POST",
+        body: JSON.stringify({ csv_text: csvText }),
+      });
+      setOperatorStatus(
+        `Imported ${result.ingested_events} ${target} event${result.ingested_events === 1 ? "" : "s"} from inline CSV.`,
+        "success"
+      );
       await refreshDashboard();
     }
 
@@ -897,6 +1068,22 @@ def render_dashboard_html() -> str:
       refreshDashboard();
     });
 
+    document.getElementById("import-template").addEventListener("change", () => {
+      applyImportTemplate();
+    });
+
+    document.getElementById("clear-import").addEventListener("click", () => {
+      document.getElementById("import-template").value = "blank";
+      applyImportTemplate();
+    });
+
+    document.getElementById("run-import").addEventListener("click", () => {
+      runInlineImport().catch((error) => {
+        setOperatorStatus(error.message, "error");
+      });
+    });
+
+    applyImportTemplate();
     refreshDashboard();
     setInterval(refreshDashboard, 8000);
   </script>
