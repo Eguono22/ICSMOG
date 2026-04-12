@@ -13,6 +13,11 @@ from src.api.cybersecurity import build_handler
 from src.services.cybersecurity import CybersecurityMonitoringService
 from src.storage import CybersecurityEventStore
 
+OPERATOR_HEADERS = {
+    "X-Operator-Name": "analyst-1",
+    "X-Operator-Key": "icsmog-demo-key",
+}
+
 
 def _start_test_server(
     service: CybersecurityMonitoringService | None = None,
@@ -25,14 +30,24 @@ def _start_test_server(
     return server, thread
 
 
-def _read_json(url: str, method: str = "GET", payload: dict | None = None) -> dict:
+def _read_json(
+    url: str,
+    method: str = "GET",
+    payload: dict | None = None,
+    headers: dict[str, str] | None = None,
+) -> dict:
     data = None
-    headers = {}
+    request_headers = dict(headers or {})
     if payload is not None:
         data = json.dumps(payload).encode("utf-8")
-        headers["Content-Type"] = "application/json"
+        request_headers["Content-Type"] = "application/json"
 
-    request = urllib.request.Request(url, data=data, headers=headers, method=method)
+    request = urllib.request.Request(
+        url,
+        data=data,
+        headers=request_headers,
+        method=method,
+    )
     with urllib.request.urlopen(request) as response:
         return json.loads(response.read().decode("utf-8"))
 
@@ -239,44 +254,55 @@ def test_alert_detail_page_renders_html():
 
 
 def test_alert_lifecycle_endpoints_update_status():
-    server, thread = _start_test_server()
-    base_url = f"http://127.0.0.1:{server.server_address[1]}"
-    try:
-        _read_json(
-            f"{base_url}/cybersecurity/network-events",
-            method="POST",
-            payload={
-                "events": [
-                    {
-                        "source_ip": "198.51.100.41",
-                        "destination_ip": "10.0.0.51",
-                        "port": 22,
-                        "protocol": "SSH",
-                        "payload_size": 121,
-                    }
-                ]
-            },
+    with tempfile.TemporaryDirectory() as temp_dir:
+        server, thread = _start_test_server(
+            CybersecurityMonitoringService(
+                store=CybersecurityEventStore(f"{temp_dir}/cybersecurity.db")
+            )
         )
-        alerts = _read_json(f"{base_url}/cybersecurity/alerts")
-        alert_id = alerts["alerts"][0]["alert_id"]
-        acknowledged = _read_json(
-            f"{base_url}/cybersecurity/alerts/{alert_id}/acknowledge",
-            method="POST",
-            payload={},
-        )
-        resolved = _read_json(
-            f"{base_url}/cybersecurity/alerts/{alert_id}/resolve",
-            method="POST",
-            payload={},
-        )
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
+        base_url = f"http://127.0.0.1:{server.server_address[1]}"
+        try:
+            _read_json(
+                f"{base_url}/cybersecurity/network-events",
+                method="POST",
+                payload={
+                    "events": [
+                        {
+                            "source_ip": "198.51.100.41",
+                            "destination_ip": "10.0.0.51",
+                            "port": 22,
+                            "protocol": "SSH",
+                            "payload_size": 121,
+                        }
+                    ]
+                },
+            )
+            alerts = _read_json(f"{base_url}/cybersecurity/alerts")
+            alert_id = alerts["alerts"][0]["alert_id"]
+            acknowledged = _read_json(
+                f"{base_url}/cybersecurity/alerts/{alert_id}/acknowledge",
+                method="POST",
+                payload={},
+                headers=OPERATOR_HEADERS,
+            )
+            resolved = _read_json(
+                f"{base_url}/cybersecurity/alerts/{alert_id}/resolve",
+                method="POST",
+                payload={},
+                headers=OPERATOR_HEADERS,
+            )
+            audit_log = _read_json(f"{base_url}/cybersecurity/audit-log?limit=5")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
 
     assert acknowledged["status"] == "acknowledged"
+    assert acknowledged["updated_by"] == "analyst-1"
     assert resolved["status"] == "resolved"
     assert resolved["resolved_at"] is not None
+    assert audit_log["audit_log"][0]["action_type"] == "resolve_alert"
+    assert audit_log["audit_log"][0]["operator_name"] == "analyst-1"
 
 
 def test_network_csv_import_endpoint_accepts_inline_csv():
@@ -293,6 +319,7 @@ def test_network_csv_import_endpoint_accepts_inline_csv():
                     "198.51.100.62,10.0.0.62,80,HTTP,15000\n"
                 )
             },
+            headers=OPERATOR_HEADERS,
         )
         alerts = _read_json(f"{base_url}/cybersecurity/alerts")
     finally:
@@ -302,6 +329,7 @@ def test_network_csv_import_endpoint_accepts_inline_csv():
 
     assert result["ingested_events"] == 2
     assert result["imported_from"] == "inline_csv_text"
+    assert result["operator_name"] == "analyst-1"
     assert len(alerts["alerts"]) == 2
 
 
@@ -315,6 +343,7 @@ def test_security_csv_import_endpoint_accepts_file_path():
             payload={
                 "csv_path": "examples/security_events.csv"
             },
+            headers=OPERATOR_HEADERS,
         )
         dashboard = _read_json(f"{base_url}/cybersecurity/dashboard")
     finally:
@@ -345,8 +374,10 @@ def test_import_history_endpoint_reports_recent_imports():
                         "198.51.100.91,10.0.0.91,22,SSH,150\n"
                     )
                 },
+                headers=OPERATOR_HEADERS,
             )
             history = _read_json(f"{base_url}/cybersecurity/import-history?limit=5")
+            audit_log = _read_json(f"{base_url}/cybersecurity/audit-log?limit=5")
         finally:
             server.shutdown()
             server.server_close()
@@ -354,7 +385,10 @@ def test_import_history_endpoint_reports_recent_imports():
 
     assert len(history["imports"]) == 1
     assert history["imports"][0]["import_type"] == "network_csv"
+    assert history["imports"][0]["operator_name"] == "analyst-1"
     assert history["imports"][0]["status"] == "success"
+    assert audit_log["audit_log"][0]["action_type"] == "import_network_csv"
+    assert audit_log["audit_log"][0]["operator_name"] == "analyst-1"
 
 
 def test_failed_import_is_recorded_in_import_history():
@@ -371,7 +405,10 @@ def test_failed_import_is_recorded_in_import_history():
                 data=json.dumps(
                     {"csv_text": "source_ip,destination_ip,protocol,payload_size\nbad,10.0.0.1,SSH,10\n"}
                 ).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
+                headers={
+                    "Content-Type": "application/json",
+                    **OPERATOR_HEADERS,
+                },
                 method="POST",
             )
             try:
@@ -387,4 +424,35 @@ def test_failed_import_is_recorded_in_import_history():
 
     assert "Missing network event fields" in error_payload["error"]
     assert history["imports"][0]["status"] == "failed"
+    assert history["imports"][0]["operator_name"] == "analyst-1"
     assert history["imports"][0]["error_message"] is not None
+
+
+def test_protected_operator_actions_require_credentials():
+    server, thread = _start_test_server()
+    base_url = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        request = urllib.request.Request(
+            f"{base_url}/cybersecurity/import/network-csv",
+            data=json.dumps(
+                {
+                    "csv_text": (
+                        "source_ip,destination_ip,port,protocol,payload_size\n"
+                        "198.51.100.81,10.0.0.81,22,SSH,150\n"
+                    )
+                }
+            ).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            urllib.request.urlopen(request)
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 401
+            error_payload = json.loads(exc.read().decode("utf-8"))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert "X-Operator-Name" in error_payload["error"]

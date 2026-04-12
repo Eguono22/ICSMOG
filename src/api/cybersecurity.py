@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
@@ -11,6 +12,8 @@ from typing import Any, Dict, Tuple
 from src.api.dashboard import render_alert_detail_html, render_dashboard_html
 from src.services.cybersecurity import CybersecurityMonitoringService
 from src.storage import CybersecurityEventStore
+
+DEFAULT_OPERATOR_API_KEY = os.environ.get("ICSMOG_OPERATOR_API_KEY", "icsmog-demo-key")
 
 
 def run_cybersecurity_api_server(
@@ -29,10 +32,11 @@ def run_cybersecurity_api_server(
     print(f"ICSMOG cybersecurity API listening on http://{host}:{port}")
     print(f"Using SQLite storage at {storage_path}")
     print("Available endpoints: GET /, GET /dashboard, GET /health, GET /cybersecurity/dashboard, "
-      "GET /cybersecurity/alerts, GET /cybersecurity/import-history, POST /cybersecurity/network-events, "
+      "GET /cybersecurity/alerts, GET /cybersecurity/import-history, GET /cybersecurity/audit-log, POST /cybersecurity/network-events, "
           "POST /cybersecurity/security-events, POST /cybersecurity/import/network-csv, "
           "POST /cybersecurity/import/security-csv, POST /cybersecurity/alerts/<id>/acknowledge, "
           "POST /cybersecurity/alerts/<id>/resolve")
+    print("Protected operator actions require headers: X-Operator-Name and X-Operator-Key")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -43,6 +47,7 @@ def run_cybersecurity_api_server(
 
 def build_handler(
     service: CybersecurityMonitoringService,
+    operator_api_key: str = DEFAULT_OPERATOR_API_KEY,
 ) -> type[BaseHTTPRequestHandler]:
     """Create a request handler bound to a specific service instance."""
 
@@ -118,6 +123,20 @@ def build_handler(
                 )
                 return
 
+            if path == "/cybersecurity/audit-log":
+                try:
+                    limit = _get_query_int(query, "limit") or 20
+                except ValueError as exc:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                self._send_json(
+                    HTTPStatus.OK,
+                    {
+                        "audit_log": service.get_audit_log(limit=limit),
+                    },
+                )
+                return
+
             self._send_json(
                 HTTPStatus.NOT_FOUND,
                 {"error": "Not found", "path": path},
@@ -129,11 +148,17 @@ def build_handler(
             if path.startswith("/cybersecurity/alerts/") and path.endswith(
                 "/acknowledge"
             ):
+                operator_name = self._require_operator()
+                if operator_name is None:
+                    return
                 alert_id = path.removeprefix("/cybersecurity/alerts/").removesuffix(
                     "/acknowledge"
                 )
                 try:
-                    result = service.acknowledge_alert(alert_id)
+                    result = service.acknowledge_alert(
+                        alert_id,
+                        operator_name=operator_name,
+                    )
                 except ValueError as exc:
                     self._send_json(
                         HTTPStatus.NOT_FOUND
@@ -146,11 +171,17 @@ def build_handler(
                 return
 
             if path.startswith("/cybersecurity/alerts/") and path.endswith("/resolve"):
+                operator_name = self._require_operator()
+                if operator_name is None:
+                    return
                 alert_id = path.removeprefix("/cybersecurity/alerts/").removesuffix(
                     "/resolve"
                 )
                 try:
-                    result = service.resolve_alert(alert_id)
+                    result = service.resolve_alert(
+                        alert_id,
+                        operator_name=operator_name,
+                    )
                 except ValueError as exc:
                     self._send_json(
                         HTTPStatus.NOT_FOUND
@@ -163,12 +194,18 @@ def build_handler(
                 return
 
             if path == "/cybersecurity/import/network-csv":
+                operator_name = self._require_operator()
+                if operator_name is None:
+                    return
                 payload, error = self._read_json_body()
                 if error is not None:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"error": error})
                     return
                 try:
-                    result = service.import_network_csv(payload)
+                    result = service.import_network_csv(
+                        payload,
+                        operator_name=operator_name,
+                    )
                 except ValueError as exc:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                     return
@@ -176,12 +213,18 @@ def build_handler(
                 return
 
             if path == "/cybersecurity/import/security-csv":
+                operator_name = self._require_operator()
+                if operator_name is None:
+                    return
                 payload, error = self._read_json_body()
                 if error is not None:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"error": error})
                     return
                 try:
-                    result = service.import_security_csv(payload)
+                    result = service.import_security_csv(
+                        payload,
+                        operator_name=operator_name,
+                    )
                 except ValueError as exc:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                     return
@@ -259,6 +302,23 @@ def build_handler(
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+
+        def _require_operator(self) -> str | None:
+            operator_name = self.headers.get("X-Operator-Name", "").strip()
+            operator_key = self.headers.get("X-Operator-Key", "")
+            if not operator_name:
+                self._send_json(
+                    HTTPStatus.UNAUTHORIZED,
+                    {"error": "X-Operator-Name header is required for this action"},
+                )
+                return None
+            if operator_key != operator_api_key:
+                self._send_json(
+                    HTTPStatus.UNAUTHORIZED,
+                    {"error": "Invalid operator credentials"},
+                )
+                return None
+            return operator_name
 
     return CybersecurityAPIHandler
 

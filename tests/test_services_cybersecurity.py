@@ -185,3 +185,39 @@ def test_alert_lifecycle_persists_across_reloads():
     assert alert is not None
     assert alert["status"] == "resolved"
     assert alert["resolved_at"] is not None
+
+
+def test_service_records_operator_audit_history():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        store = CybersecurityEventStore(f"{temp_dir}/cybersecurity.db")
+        service = CybersecurityMonitoringService(store=store)
+        service.ingest_network_payload(
+            {
+                "events": [
+                    {
+                        "source_ip": "203.0.113.130",
+                        "destination_ip": "10.0.0.30",
+                        "port": 22,
+                        "protocol": "SSH",
+                        "payload_size": 111,
+                    }
+                ]
+            }
+        )
+        alert_id = service.get_alerts()[0]["alert_id"]
+        service.acknowledge_alert(alert_id, operator_name="soc-lead")
+        service.import_network_csv(
+            {
+                "csv_text": (
+                    "source_ip,destination_ip,port,protocol,payload_size\n"
+                    "198.51.100.99,10.0.0.99,22,SSH,144\n"
+                )
+            },
+            operator_name="soc-lead",
+        )
+
+        audit_log = service.get_audit_log(limit=5)
+        history = service.get_import_history(limit=5)
+
+    assert audit_log[0]["operator_name"] == "soc-lead"
+    assert history[0]["operator_name"] == "soc-lead"

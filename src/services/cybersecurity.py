@@ -66,7 +66,12 @@ class CybersecurityMonitoringService:
     def ingest_security_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         return self.ingest_security_events(_parse_security_events(payload))
 
-    def import_network_csv(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def import_network_csv(
+        self,
+        payload: Dict[str, Any],
+        operator_name: str = "system",
+    ) -> Dict[str, Any]:
+        operator_name = _normalize_operator_name(operator_name)
         imported_from = _describe_csv_source(payload)
         try:
             events = _load_network_events_from_csv_payload(payload)
@@ -76,20 +81,42 @@ class CybersecurityMonitoringService:
                 self.store.record_import_history(
                     imported_from,
                     "network_csv",
+                    operator_name=operator_name,
                     status="failed",
                     error_message=str(exc),
+                )
+                self.store.record_audit_event(
+                    operator_name=operator_name,
+                    action_type="import_network_csv",
+                    target=imported_from,
+                    status="failed",
+                    details={"error_message": str(exc)},
                 )
             raise
         if self.store is not None:
             self.store.record_import_history(
                 imported_from,
                 "network_csv",
+                operator_name=operator_name,
                 status="success",
             )
+            self.store.record_audit_event(
+                operator_name=operator_name,
+                action_type="import_network_csv",
+                target=imported_from,
+                status="success",
+                details={"ingested_events": result["ingested_events"]},
+            )
         result["imported_from"] = imported_from
+        result["operator_name"] = operator_name
         return result
 
-    def import_security_csv(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def import_security_csv(
+        self,
+        payload: Dict[str, Any],
+        operator_name: str = "system",
+    ) -> Dict[str, Any]:
+        operator_name = _normalize_operator_name(operator_name)
         imported_from = _describe_csv_source(payload)
         try:
             events = _load_security_events_from_csv_payload(payload)
@@ -99,17 +126,34 @@ class CybersecurityMonitoringService:
                 self.store.record_import_history(
                     imported_from,
                     "security_csv",
+                    operator_name=operator_name,
                     status="failed",
                     error_message=str(exc),
+                )
+                self.store.record_audit_event(
+                    operator_name=operator_name,
+                    action_type="import_security_csv",
+                    target=imported_from,
+                    status="failed",
+                    details={"error_message": str(exc)},
                 )
             raise
         if self.store is not None:
             self.store.record_import_history(
                 imported_from,
                 "security_csv",
+                operator_name=operator_name,
                 status="success",
             )
+            self.store.record_audit_event(
+                operator_name=operator_name,
+                action_type="import_security_csv",
+                target=imported_from,
+                status="success",
+                details={"ingested_events": result["ingested_events"]},
+            )
         result["imported_from"] = imported_from
+        result["operator_name"] = operator_name
         return result
 
     def get_alerts(
@@ -137,7 +181,12 @@ class CybersecurityMonitoringService:
                 return alert
         return None
 
-    def acknowledge_alert(self, alert_id: str) -> Dict[str, Any]:
+    def acknowledge_alert(
+        self,
+        alert_id: str,
+        operator_name: str = "system",
+    ) -> Dict[str, Any]:
+        operator_name = _normalize_operator_name(operator_name)
         alert = self._find_alert_object(alert_id)
         if alert is None:
             raise ValueError(f"Alert '{alert_id}' was not found")
@@ -145,15 +194,40 @@ class CybersecurityMonitoringService:
             raise ValueError("Resolved alerts cannot be acknowledged")
         alert.acknowledge()
         self._persist_alert_state(alert)
-        return _serialize_alert(alert)
+        serialized = _serialize_alert(alert)
+        if self.store is not None:
+            self.store.record_audit_event(
+                operator_name=operator_name,
+                action_type="acknowledge_alert",
+                target=alert_id,
+                status="success",
+                details={"status": serialized["status"]},
+            )
+        serialized["updated_by"] = operator_name
+        return serialized
 
-    def resolve_alert(self, alert_id: str) -> Dict[str, Any]:
+    def resolve_alert(
+        self,
+        alert_id: str,
+        operator_name: str = "system",
+    ) -> Dict[str, Any]:
+        operator_name = _normalize_operator_name(operator_name)
         alert = self._find_alert_object(alert_id)
         if alert is None:
             raise ValueError(f"Alert '{alert_id}' was not found")
         alert.resolve()
         self._persist_alert_state(alert)
-        return _serialize_alert(alert)
+        serialized = _serialize_alert(alert)
+        if self.store is not None:
+            self.store.record_audit_event(
+                operator_name=operator_name,
+                action_type="resolve_alert",
+                target=alert_id,
+                status="success",
+                details={"status": serialized["status"]},
+            )
+        serialized["updated_by"] = operator_name
+        return serialized
 
     def get_triggered_rules(self) -> List[Dict[str, Any]]:
         return self.siem.get_triggered_rules()
@@ -168,6 +242,11 @@ class CybersecurityMonitoringService:
         if self.store is None:
             return []
         return self.store.load_import_history(limit=limit)
+
+    def get_audit_log(self, limit: int = 20) -> List[Dict[str, Any]]:
+        if self.store is None:
+            return []
+        return self.store.load_audit_log(limit=limit)
 
     def _ingest_network_events(
         self,
@@ -493,6 +572,13 @@ def _describe_csv_source(payload: Dict[str, Any]) -> str:
     if payload.get("csv_text") is not None:
         return "inline_csv_text"
     return "unknown_csv_source"
+
+
+def _normalize_operator_name(operator_name: str) -> str:
+    normalized = str(operator_name).strip()
+    if not normalized:
+        raise ValueError("operator_name is required")
+    return normalized
 
 
 def _serialize_alert(alert: Alert) -> Dict[str, Any]:

@@ -25,13 +25,15 @@ What works well now:
 - JSON output for lightweight automation and testing
 - persistent SQLite-backed cybersecurity event history through the API
 - built-in cybersecurity dashboard served from the same API process
+- lightweight operator authentication for protected imports and alert actions
+- persistent operator audit trails for imports and alert lifecycle changes
 - unit tests covering the existing domain modules
 
 What is not built yet:
 
 - real-time streaming ingestion
 - a full multi-user operations dashboard
-- authentication and access control
+- full role-based access control
 - production deployment workflow
 
 ## Primary Use Case
@@ -166,6 +168,7 @@ Example endpoints:
 - `GET /cybersecurity/alerts`
 - `GET /cybersecurity/alerts/<alert_id>`
 - `GET /cybersecurity/import-history`
+- `GET /cybersecurity/audit-log`
 - `POST /cybersecurity/alerts/<alert_id>/acknowledge`
 - `POST /cybersecurity/alerts/<alert_id>/resolve`
 - `POST /cybersecurity/import/network-csv`
@@ -190,6 +193,9 @@ The watch-folder workflow records processed files in the SQLite database, so
 already-imported CSVs are skipped after restart unless the file contents change.
 Import history records both successful and failed CSV attempts so operators can
 review what was accepted and what was rejected.
+Protected operator actions require `X-Operator-Name` and `X-Operator-Key`
+headers. By default, the demo key is `icsmog-demo-key`, and it can be overridden
+with the `ICSMOG_OPERATOR_API_KEY` environment variable.
 
 ## Example Direction
 
@@ -221,7 +227,7 @@ If you are evaluating ICSMOG as a future application, the most promising path is
 
 ### Later
 
-- role-based access
+- role-based access and richer user management
 - streaming or scheduled ingestion
 - deployment and packaging improvements
 

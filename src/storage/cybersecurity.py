@@ -213,6 +213,7 @@ class CybersecurityEventStore:
         self,
         file_path: str,
         import_type: str,
+        operator_name: str | None = None,
         status: str = "success",
         error_message: str | None = None,
     ) -> None:
@@ -222,12 +223,13 @@ class CybersecurityEventStore:
                 INSERT INTO import_history (
                     file_path,
                     import_type,
+                    operator_name,
                     status,
                     error_message,
                     imported_at
-                ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """,
-                (file_path, import_type, status, error_message),
+                (file_path, import_type, operator_name, status, error_message),
             )
 
     def load_import_history(self, limit: int = 20) -> list[dict[str, str]]:
@@ -237,6 +239,7 @@ class CybersecurityEventStore:
                 SELECT
                     file_path,
                     import_type,
+                    operator_name,
                     status,
                     error_message,
                     imported_at
@@ -250,9 +253,68 @@ class CybersecurityEventStore:
             {
                 "file_path": row[0],
                 "import_type": row[1],
-                "status": row[2],
-                "error_message": row[3],
-                "imported_at": row[4],
+                "operator_name": row[2],
+                "status": row[3],
+                "error_message": row[4],
+                "imported_at": row[5],
+            }
+            for row in rows
+        ]
+
+    def record_audit_event(
+        self,
+        operator_name: str,
+        action_type: str,
+        target: str,
+        status: str = "success",
+        details: dict | None = None,
+    ) -> None:
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO audit_log (
+                    operator_name,
+                    action_type,
+                    target,
+                    status,
+                    details,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (
+                    operator_name,
+                    action_type,
+                    target,
+                    status,
+                    json.dumps(details or {}),
+                ),
+            )
+
+    def load_audit_log(self, limit: int = 20) -> list[dict[str, str | dict]]:
+        with sqlite3.connect(self.db_path) as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    operator_name,
+                    action_type,
+                    target,
+                    status,
+                    details,
+                    created_at
+                FROM audit_log
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [
+            {
+                "operator_name": row[0],
+                "action_type": row[1],
+                "target": row[2],
+                "status": row[3],
+                "details": json.loads(row[4]) if row[4] else {},
+                "created_at": row[5],
             }
             for row in rows
         ]
@@ -312,9 +374,23 @@ class CybersecurityEventStore:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     file_path TEXT NOT NULL,
                     import_type TEXT NOT NULL,
+                    operator_name TEXT,
                     status TEXT NOT NULL DEFAULT 'success',
                     error_message TEXT,
                     imported_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    operator_name TEXT NOT NULL,
+                    action_type TEXT NOT NULL,
+                    target TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'success',
+                    details TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL
                 )
                 """
             )
@@ -322,6 +398,13 @@ class CybersecurityEventStore:
                 row[1]
                 for row in connection.execute("PRAGMA table_info(import_history)")
             }
+            if "operator_name" not in columns:
+                connection.execute(
+                    """
+                    ALTER TABLE import_history
+                    ADD COLUMN operator_name TEXT
+                    """
+                )
             if "status" not in columns:
                 connection.execute(
                     """

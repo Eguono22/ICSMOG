@@ -262,6 +262,10 @@ def render_dashboard_html() -> str:
       margin-top: 16px;
     }
 
+    .history-grid.single-panel {
+      grid-template-columns: 1fr;
+    }
+
     .panel {
       padding: 20px;
     }
@@ -334,6 +338,7 @@ def render_dashboard_html() -> str:
       color: var(--ink-soft);
     }
 
+    .operator-field input,
     .operator-field select,
     .operator-field textarea {
       width: 100%;
@@ -684,6 +689,16 @@ def render_dashboard_html() -> str:
         <div class="operator-controls">
           <div class="operator-grid">
             <div class="operator-field">
+              <label for="operator-name">Operator Name</label>
+              <input id="operator-name" type="text" placeholder="SOC analyst">
+            </div>
+            <div class="operator-field">
+              <label for="operator-key">Operator Key</label>
+              <input id="operator-key" type="password" placeholder="icsmog-demo-key">
+            </div>
+          </div>
+          <div class="operator-grid">
+            <div class="operator-field">
               <label for="import-target">Import Target</label>
               <select id="import-target">
                 <option value="network">Network</option>
@@ -717,7 +732,7 @@ def render_dashboard_html() -> str:
               <span class="button-copy">Reset the editor so you can paste a fresh payload.</span>
             </button>
           </div>
-          <div class="operator-status" id="operator-status">Ready for an inline CSV import.</div>
+          <div class="operator-status" id="operator-status">Set operator credentials, then run an inline CSV import.</div>
         </div>
       </article>
 
@@ -733,6 +748,20 @@ def render_dashboard_html() -> str:
         </div>
       </article>
     </section>
+
+    <section class="history-grid single-panel fade-up">
+      <article class="panel">
+        <div class="panel-topline">
+          <div>
+            <h2>Audit Trail</h2>
+            <p class="panel-copy">Protected operator actions are recorded here so import and alert decisions stay attributable.</p>
+          </div>
+        </div>
+        <div class="stack" id="audit-log-list">
+          <div class="empty-state">No operator actions have been recorded yet.</div>
+        </div>
+      </article>
+    </section>
   </main>
 
   <script>
@@ -741,6 +770,7 @@ def render_dashboard_html() -> str:
       alerts: [],
       triggeredRules: [],
       imports: [],
+      auditLog: [],
       filters: {
         threatLevel: "",
         status: "",
@@ -764,9 +794,13 @@ def render_dashboard_html() -> str:
     };
 
     async function fetchJson(path, options = {}) {
+      const headers = {
+        "Content-Type": "application/json",
+        ...(options.headers || {}),
+      };
       const response = await fetch(path, {
-        headers: { "Content-Type": "application/json" },
         ...options,
+        headers,
       });
 
       if (!response.ok) {
@@ -779,16 +813,18 @@ def render_dashboard_html() -> str:
 
     async function refreshDashboard() {
       try {
-        const [dashboard, alertPayload, importPayload] = await Promise.all([
+        const [dashboard, alertPayload, importPayload, auditPayload] = await Promise.all([
           fetchJson("/cybersecurity/dashboard"),
           fetchJson(buildAlertEndpoint()),
           fetchJson("/cybersecurity/import-history?limit=8"),
+          fetchJson("/cybersecurity/audit-log?limit=8"),
         ]);
 
         dashboardState.dashboard = dashboard;
         dashboardState.alerts = alertPayload.alerts || [];
         dashboardState.triggeredRules = alertPayload.triggered_rules || [];
         dashboardState.imports = importPayload.imports || [];
+        dashboardState.auditLog = auditPayload.audit_log || [];
         render();
         setStatus("Live");
       } catch (error) {
@@ -805,6 +841,7 @@ def render_dashboard_html() -> str:
       renderAlerts();
       renderRules();
       renderImportHistory();
+      renderAuditLog();
     }
 
     function renderMetrics() {
@@ -913,8 +950,30 @@ def render_dashboard_html() -> str:
               <div class="alert-title">${escapeHtml(entry.file_path)}</div>
               <span class="tag ${escapeHtml(entry.status)}">${escapeHtml(entry.status)}</span>
             </div>
+            <div class="muted">Operator ${escapeHtml(entry.operator_name || "system")}</div>
             <div class="muted">${escapeHtml(entry.import_type.replaceAll("_", " "))} at ${formatTimestamp(entry.imported_at)}</div>
             ${entry.error_message ? `<div class="muted">Error: ${escapeHtml(entry.error_message)}</div>` : ""}
+          </article>
+        `)
+        .join("");
+    }
+
+    function renderAuditLog() {
+      const container = document.getElementById("audit-log-list");
+      if (!dashboardState.auditLog.length) {
+        container.innerHTML = '<div class="empty-state">No operator actions have been recorded yet.</div>';
+        return;
+      }
+
+      container.innerHTML = dashboardState.auditLog
+        .map((entry) => `
+          <article class="history-card">
+            <div class="alert-head">
+              <div class="alert-title">${escapeHtml(entry.action_type.replaceAll("_", " "))}</div>
+              <span class="tag ${escapeHtml(entry.status)}">${escapeHtml(entry.status)}</span>
+            </div>
+            <div class="muted">Operator ${escapeHtml(entry.operator_name)} targeted ${escapeHtml(entry.target)}</div>
+            <div class="muted">${formatTimestamp(entry.created_at)}</div>
           </article>
         `)
         .join("");
@@ -928,6 +987,32 @@ def render_dashboard_html() -> str:
       const node = document.getElementById("operator-status");
       node.textContent = message;
       node.className = tone ? `operator-status ${tone}` : "operator-status";
+    }
+
+    function loadOperatorCredentials() {
+      document.getElementById("operator-name").value = localStorage.getItem("icsmog.operatorName") || "";
+      document.getElementById("operator-key").value = localStorage.getItem("icsmog.operatorKey") || "icsmog-demo-key";
+    }
+
+    function persistOperatorCredentials() {
+      localStorage.setItem("icsmog.operatorName", document.getElementById("operator-name").value.trim());
+      localStorage.setItem("icsmog.operatorKey", document.getElementById("operator-key").value);
+    }
+
+    function getOperatorHeaders() {
+      const operatorName = document.getElementById("operator-name").value.trim();
+      const operatorKey = document.getElementById("operator-key").value;
+      if (!operatorName) {
+        throw new Error("Operator name is required for protected actions.");
+      }
+      if (!operatorKey) {
+        throw new Error("Operator key is required for protected actions.");
+      }
+      persistOperatorCredentials();
+      return {
+        "X-Operator-Name": operatorName,
+        "X-Operator-Key": operatorKey,
+      };
     }
 
     function buildAlertEndpoint() {
@@ -1010,10 +1095,11 @@ def render_dashboard_html() -> str:
       setOperatorStatus(`Importing ${target} CSV payload...`);
       const result = await fetchJson(`/cybersecurity/import/${target}-csv`, {
         method: "POST",
+        headers: getOperatorHeaders(),
         body: JSON.stringify({ csv_text: csvText }),
       });
       setOperatorStatus(
-        `Imported ${result.ingested_events} ${target} event${result.ingested_events === 1 ? "" : "s"} from inline CSV.`,
+        `Imported ${result.ingested_events} ${target} event${result.ingested_events === 1 ? "" : "s"} from inline CSV as ${result.operator_name}.`,
         "success"
       );
       await refreshDashboard();
@@ -1083,6 +1169,15 @@ def render_dashboard_html() -> str:
       });
     });
 
+    document.getElementById("operator-name").addEventListener("input", () => {
+      persistOperatorCredentials();
+    });
+
+    document.getElementById("operator-key").addEventListener("input", () => {
+      persistOperatorCredentials();
+    });
+
+    loadOperatorCredentials();
     applyImportTemplate();
     refreshDashboard();
     setInterval(refreshDashboard, 8000);
@@ -1180,6 +1275,35 @@ def render_alert_detail_html(alert_id: str) -> str:
       margin-top: 18px;
     }}
 
+    .credential-grid {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 18px;
+    }}
+
+    .field {{
+      display: grid;
+      gap: 6px;
+    }}
+
+    .field label {{
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }}
+
+    .field input {{
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 11px 12px;
+      font: inherit;
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.82);
+    }}
+
     .action-button {{
       border: 0;
       border-radius: 16px;
@@ -1248,6 +1372,10 @@ def render_alert_detail_html(alert_id: str) -> str:
     }}
 
     @media (max-width: 700px) {{
+      .credential-grid {{
+        grid-template-columns: 1fr;
+      }}
+
       .grid {{
         grid-template-columns: 1fr;
       }}
@@ -1261,6 +1389,16 @@ def render_alert_detail_html(alert_id: str) -> str:
       <div class="eyebrow">Alert Investigation</div>
       <h1 id="alert-title">Loading alert {alert_id}</h1>
       <p id="alert-copy">Fetching the persisted alert record and its investigation details.</p>
+      <div class="credential-grid">
+        <div class="field">
+          <label for="operator-name">Operator Name</label>
+          <input id="operator-name" type="text" placeholder="SOC analyst">
+        </div>
+        <div class="field">
+          <label for="operator-key">Operator Key</label>
+          <input id="operator-key" type="password" placeholder="icsmog-demo-key">
+        </div>
+      </div>
       <div class="action-bar">
         <button class="action-button secondary" id="acknowledge-button" type="button">Acknowledge</button>
         <button class="action-button" id="resolve-button" type="button">Resolve</button>
@@ -1280,6 +1418,32 @@ def render_alert_detail_html(alert_id: str) -> str:
   </main>
   <script>
     const alertId = {alert_id!r};
+
+    function loadOperatorCredentials() {{
+      document.getElementById("operator-name").value = localStorage.getItem("icsmog.operatorName") || "";
+      document.getElementById("operator-key").value = localStorage.getItem("icsmog.operatorKey") || "icsmog-demo-key";
+    }}
+
+    function persistOperatorCredentials() {{
+      localStorage.setItem("icsmog.operatorName", document.getElementById("operator-name").value.trim());
+      localStorage.setItem("icsmog.operatorKey", document.getElementById("operator-key").value);
+    }}
+
+    function getOperatorHeaders() {{
+      const operatorName = document.getElementById("operator-name").value.trim();
+      const operatorKey = document.getElementById("operator-key").value;
+      if (!operatorName) {{
+        throw new Error("Operator name is required for alert actions.");
+      }}
+      if (!operatorKey) {{
+        throw new Error("Operator key is required for alert actions.");
+      }}
+      persistOperatorCredentials();
+      return {{
+        "X-Operator-Name": operatorName,
+        "X-Operator-Key": operatorKey,
+      }};
+    }}
 
     async function loadAlert() {{
       const response = await fetch(`/cybersecurity/alerts/${{encodeURIComponent(alertId)}}`);
@@ -1323,8 +1487,10 @@ def render_alert_detail_html(alert_id: str) -> str:
     }}
 
     async function applyAction(action) {{
+      const operatorHeaders = getOperatorHeaders();
       const response = await fetch(`/cybersecurity/alerts/${{encodeURIComponent(alertId)}}/${{action}}`, {{
         method: "POST",
+        headers: operatorHeaders,
       }});
       const payload = await response.json();
       if (!response.ok) {{
@@ -1332,7 +1498,7 @@ def render_alert_detail_html(alert_id: str) -> str:
       }}
       render(payload);
       document.getElementById("action-status").textContent =
-        `Alert updated: status is now ${{payload.status}}.`;
+        `Alert updated by ${{payload.updated_by}}: status is now ${{payload.status}}.`;
     }}
 
     function formatTimestamp(value) {{
@@ -1359,6 +1525,14 @@ def render_alert_detail_html(alert_id: str) -> str:
       document.getElementById("raw-json").textContent = JSON.stringify({{ error: error.message }}, null, 2);
     }});
 
+    document.getElementById("operator-name").addEventListener("input", () => {{
+      persistOperatorCredentials();
+    }});
+
+    document.getElementById("operator-key").addEventListener("input", () => {{
+      persistOperatorCredentials();
+    }});
+
     document.getElementById("acknowledge-button").addEventListener("click", () => {{
       applyAction("acknowledge").catch((error) => {{
         document.getElementById("action-status").textContent = error.message;
@@ -1370,6 +1544,8 @@ def render_alert_detail_html(alert_id: str) -> str:
         document.getElementById("action-status").textContent = error.message;
       }});
     }});
+
+    loadOperatorCredentials();
   </script>
 </body>
 </html>
