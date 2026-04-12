@@ -2,143 +2,91 @@
 
 **Intelligent Computer Systems for Monitoring Organizations**
 
-ICSMOG is a Python framework that simulates advanced organizational monitoring systems using artificial intelligence (AI), machine learning (ML), big data analytics, and automation. It tracks organizational performance, security posture, infrastructure health, workforce productivity, predictive maintenance, and customer intelligence — all from a single, unified codebase.
+ICSMOG is a Python monitoring framework for simulating and validating organizational observability workflows. The strongest current use case is **cybersecurity monitoring**: detecting suspicious network activity, correlating security events, and demonstrating automated response behavior from a single codebase.
 
----
+The repository also includes supporting modules for business intelligence, infrastructure monitoring, workforce analytics, maintenance, and customer intelligence, but those should be treated as adjacent capabilities while the project matures.
 
-## Table of Contents
+## Why This Project
 
-- [Overview](#overview)
-- [Project Structure](#project-structure)
-- [Modules](#modules)
-  - [1. Network & Cybersecurity Monitoring](#1-network--cybersecurity-monitoring)
-  - [2. Business Performance Monitoring](#2-business-performance-monitoring)
-  - [3. Environmental & Infrastructure Monitoring](#3-environmental--infrastructure-monitoring)
-  - [4. Employee & Workflow Monitoring](#4-employee--workflow-monitoring)
-  - [5. Predictive Maintenance & Operational Monitoring](#5-predictive-maintenance--operational-monitoring)
-  - [6. Customer & Market Monitoring](#6-customer--market-monitoring)
-- [Requirements](#requirements)
-- [Installation](#installation)
-- [Running](#running)
-- [Testing](#testing)
-- [Contributing](#contributing)
+Many monitoring tools are either too narrow to show cross-domain visibility or too broad to evaluate quickly. ICSMOG is useful as a:
 
----
+- learning and prototyping environment for monitoring systems
+- foundation for building a focused security or operations product
+- demo framework for alerting, dashboards, and event correlation workflows
 
-## Overview
+## Current Positioning
 
-ICSMOG models six major monitoring domains found in modern enterprises. Each domain is implemented as an independent module under `src/`, exposing clean Python classes that can be instantiated, configured, and queried independently or together.
+Today, ICSMOG is best understood as a **framework and simulation platform**, not a finished production application.
 
----
+What works well now:
+
+- modular Python classes for six monitoring domains
+- a runnable CLI demo that exercises each subsystem
+- JSON output for lightweight automation and testing
+- persistent SQLite-backed cybersecurity event history through the API
+- built-in cybersecurity dashboard served from the same API process
+- unit tests covering the existing domain modules
+
+What is not built yet:
+
+- real-time streaming ingestion
+- a full multi-user operations dashboard
+- authentication and access control
+- production deployment workflow
+
+## Primary Use Case
+
+The clearest near-term product direction is **security monitoring for small teams**.
+
+That means ICSMOG should gradually evolve toward:
+
+- ingesting network and auth events
+- detecting suspicious behavior with understandable rules
+- correlating related incidents in a SIEM-style workflow
+- surfacing alerts in a dashboard or API
+- supporting lightweight automated response actions
 
 ## Project Structure
 
-```
+```text
 ICSMOG/
-├── main.py               # Entry point — runs a full demo of all modules
-├── requirements.txt      # Python dependencies
-├── src/
-│   ├── cybersecurity/    # IDS, IPS, and SIEM
-│   ├── business/         # ERP and Business Intelligence
-│   ├── infrastructure/   # IoT sensors and Building Management System
-│   ├── workforce/        # Workforce analytics and workflow management
-│   ├── maintenance/      # Predictive maintenance and SCADA
-│   └── customer/         # CRM and sentiment analysis
-└── tests/                # Unit tests for all modules
+|- main.py               # Entry point for CLI demos
+|- requirements.txt      # Python dependencies
+|- src/
+|  |- cybersecurity/     # IDS, IPS, and SIEM
+|  |- business/          # ERP and business intelligence
+|  |- infrastructure/    # IoT sensors and building systems
+|  |- workforce/         # Workforce analytics and workflow management
+|  |- maintenance/       # Predictive maintenance and SCADA
+|  `- customer/          # CRM and sentiment analysis
+`- tests/                # Unit tests
 ```
-
----
 
 ## Modules
 
-### 1. Network & Cybersecurity Monitoring
+### Cybersecurity
 
 **Path:** `src/cybersecurity`
 
-Monitors network traffic and security events to detect and respond to threats in real time.
+This is the most product-ready area of the repository today.
 
 | Class | Description |
 |-------|-------------|
-| `IntrusionDetectionSystem` | Rule-based and anomaly-based network intrusion detection. Flags traffic from blocklisted IPs, access on high-risk ports (SSH, RDP, etc.), and unusually large payloads. |
-| `IntrusionPreventionSystem` | Extends the IDS with active prevention — automatically blocks source IPs that trigger `HIGH` or `CRITICAL` alerts. |
-| `SecurityInformationEventManagement` | Aggregates security events from multiple sources, runs correlation rules (e.g. brute-force detection), and provides a unified security dashboard. |
+| `IntrusionDetectionSystem` | Flags suspicious traffic using blocklists, high-risk ports, and anomalous payload patterns. |
+| `IntrusionPreventionSystem` | Extends detection with automatic blocking behavior for severe alerts. |
+| `SecurityInformationEventManagement` | Aggregates security events, applies correlation rules, and summarizes incident activity. |
 
----
+### Additional Domain Modules
 
-### 2. Business Performance Monitoring
+These modules are available in the repo and useful for experimentation, but they currently support the project story rather than define it.
 
-**Path:** `src/business`
-
-Tracks core business processes and generates analytical reports from operational data.
-
-| Class | Description |
-|-------|-------------|
-| `EnterpriseResourcePlanning` | Monitors business processes across Finance, HR, Procurement, Supply Chain, and Operations departments. Tracks KPIs per process and produces a live dashboard. |
-| `BusinessIntelligence` | Registers datasets, creates chart-backed reports (bar, line, pie, scatter), and computes summary statistics for data-driven decision making. |
-
----
-
-### 3. Environmental & Infrastructure Monitoring
-
-**Path:** `src/infrastructure`
-
-Monitors physical environments and building systems through IoT sensors and a central Building Management System.
-
-| Class | Description |
-|-------|-------------|
-| `IoTSensor` | Represents an individual sensor (temperature, humidity, vibration, air quality, pressure, motion) with configurable alert thresholds. |
-| `IoTSensorNetwork` | Manages a network of sensors, records readings, and raises threshold alerts automatically. |
-| `BuildingManagementSystem` | Oversees building systems (HVAC, lighting, security, fire safety, elevators, power) and tracks operational status and settings. |
-
----
-
-### 4. Employee & Workflow Monitoring
-
-**Path:** `src/workforce`
-
-Tracks employee performance and manages task-based project workflows.
-
-| Class | Description |
-|-------|-------------|
-| `WorkforceAnalytics` | Records per-employee metrics (performance, productivity, engagement, attendance, task completion) and surfaces organisation-wide summaries. |
-| `WorkflowManagement` | Manages tasks with priorities and statuses, supports lifecycle transitions (e.g. `TODO → IN_PROGRESS → DONE`), and reports team-level workflow health. |
-
----
-
-### 5. Predictive Maintenance & Operational Monitoring
-
-**Path:** `src/maintenance`
-
-Uses sensor telemetry to predict equipment failures and monitors industrial control systems.
-
-| Class | Description |
-|-------|-------------|
-| `PredictiveMaintenanceSystem` | Registers machines, ingests sensor data (temperature, vibration, pressure, RPM), and raises alerts when readings fall outside safe operating ranges. |
-| `SCADASystem` | Manages PLC controllers and process variables. Triggers alarms when a process variable exceeds its configured low/high limits. |
-
----
-
-### 6. Customer & Market Monitoring
-
-**Path:** `src/customer`
-
-Manages customer relationships and analyses public sentiment about the organisation.
-
-| Class | Description |
-|-------|-------------|
-| `CustomerRelationshipManagement` | Stores customer records with lifecycle stages (prospect → active → churned), logs interactions (meetings, emails, calls, demos), and tracks account value. |
-| `SentimentAnalyzer` | Analyses social media posts, reviews, and news articles using keyword-based sentiment scoring and aggregates results into a brand health dashboard. |
-
----
-
-## Requirements
-
-- Python 3.9+
-- [numpy](https://numpy.org/) >= 1.24.0
-- [scikit-learn](https://scikit-learn.org/) >= 1.3.0
-- [pandas](https://pandas.pydata.org/) >= 2.0.0
-
----
+| Domain | Path | Purpose |
+|-------|------|---------|
+| Business | `src/business` | ERP process monitoring and business intelligence reporting |
+| Infrastructure | `src/infrastructure` | IoT sensor alerts and building system monitoring |
+| Workforce | `src/workforce` | Employee analytics and workflow tracking |
+| Maintenance | `src/maintenance` | Predictive maintenance and SCADA-style monitoring |
+| Customer | `src/customer` | CRM workflows and sentiment analysis |
 
 ## Installation
 
@@ -148,23 +96,21 @@ cd ICSMOG
 pip install -r requirements.txt
 ```
 
----
-
 ## Running
 
-Execute the full demo, which initialises all six monitoring subsystems and prints a live summary for each:
+Run the full multi-domain demo:
 
 ```bash
 python main.py
 ```
 
-Run only a specific step (for example, Step 1 - Network & Cybersecurity Monitoring):
+Run only the cybersecurity step:
 
 ```bash
 python main.py --step 1
 ```
 
-Output machine-readable JSON for all steps:
+Output JSON for automation workflows:
 
 ```bash
 python main.py --json
@@ -173,64 +119,125 @@ python main.py --json
 Output JSON for a single step:
 
 ```bash
-python main.py --step 2 --json
+python main.py --step 1 --json
 ```
 
-Example JSON payload for a single step:
+Run the cybersecurity API and dashboard:
+
+```bash
+python main.py --serve-api
+```
+
+Use a custom SQLite path if needed:
+
+```bash
+python main.py --serve-api --storage-path data/cybersecurity.db
+```
+
+Scan a watch folder once for CSV files:
+
+```bash
+python main.py --watch-csv-dir examples/watch_inbox --watch-once
+```
+
+Continuously watch a folder for new CSV files:
+
+```bash
+python main.py --watch-csv-dir examples/watch_inbox --poll-interval-seconds 10
+```
+
+Expected watch-folder layout:
+
+```text
+watch_inbox/
+|- network/
+|  `- *.csv
+`- security/
+   `- *.csv
+```
+
+Example endpoints:
+
+- `GET /`
+- `GET /dashboard`
+- `GET /dashboard/alerts/<alert_id>`
+- `GET /health`
+- `GET /cybersecurity/dashboard`
+- `GET /cybersecurity/alerts`
+- `GET /cybersecurity/alerts/<alert_id>`
+- `GET /cybersecurity/import-history`
+- `POST /cybersecurity/alerts/<alert_id>/acknowledge`
+- `POST /cybersecurity/alerts/<alert_id>/resolve`
+- `POST /cybersecurity/import/network-csv`
+- `POST /cybersecurity/import/security-csv`
+- `POST /cybersecurity/network-events`
+- `POST /cybersecurity/security-events`
+
+CSV imports accept either `csv_path` or `csv_text`. Example:
 
 ```json
 {
-  "step": 2,
-  "result": {
-    "erp_dashboard": {
-      "organization": "Acme Corp",
-      "total_processes": 1,
-      "status_breakdown": {
-        "pending": 0,
-        "in_progress": 1,
-        "completed": 0,
-        "failed": 0
-      },
-      "department_breakdown": {
-        "finance": 0,
-        "hr": 1,
-        "procurement": 0,
-        "supply_chain": 0,
-        "operations": 0
-      }
-    },
-    "bi_dashboard": {
-      "platform": "ICSMOG-BI",
-      "datasets": 1,
-      "reports": 1,
-      "report_titles": [
-        "Revenue by Region"
-      ]
-    },
-    "bi_stats": {
-      "count": 3,
-      "mean": 118333.33333333333,
-      "median": 120000,
-      "stdev": 22546.248764114473
-    }
-  }
+  "csv_path": "examples/network_events.csv"
 }
 ```
 
----
+Sample files are available at:
+
+- `examples/network_events.csv`
+- `examples/security_events.csv`
+
+The watch-folder workflow records processed files in the SQLite database, so
+already-imported CSVs are skipped after restart unless the file contents change.
+Import history records both successful and failed CSV attempts so operators can
+review what was accepted and what was rejected.
+
+## Example Direction
+
+If you are evaluating ICSMOG as a future application, the most promising path is:
+
+1. focus the product around cybersecurity monitoring
+2. add persistent event storage
+3. expose alerts and dashboards through an API
+4. refine the built-in dashboard into a more complete operations UI
+5. add real connectors for logs, auth events, or CSV imports
+
+## Roadmap
+
+### Available Now
+
+- modular monitoring classes
+- demo runner with sample scenarios
+- JSON-formatted output
+- unit test coverage for domain behavior
+
+### Next
+
+- clearer cybersecurity-first architecture
+- reusable service layer instead of demo-only flows
+- richer alert querying and filtering on top of persisted history
+- minimal API endpoints for ingestion and reporting
+- better dashboard workflows for investigation and triage
+- automatic file-based ingestion for recurring CSV feeds
+
+### Later
+
+- role-based access
+- streaming or scheduled ingestion
+- deployment and packaging improvements
 
 ## Testing
 
-Run the full test suite with:
+Run the test suite with:
 
 ```bash
 pip install pytest
 python -m pytest tests/ -v
 ```
 
----
-
 ## Contributing
 
-For local development setup, linting, test commands, and pull request guidance,
-see [CONTRIBUTING.md](CONTRIBUTING.md).
+For local development setup, linting, test commands, and pull request guidance, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+This project is licensed under the terms of the [LICENSE](LICENSE) file.

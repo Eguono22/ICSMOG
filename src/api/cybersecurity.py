@@ -1,0 +1,281 @@
+"""Minimal HTTP API for ICSMOG cybersecurity workflows."""
+
+from __future__ import annotations
+
+import json
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlsplit
+from typing import Any, Dict, Tuple
+
+from src.api.dashboard import render_alert_detail_html, render_dashboard_html
+from src.services.cybersecurity import CybersecurityMonitoringService
+from src.storage import CybersecurityEventStore
+
+
+def run_cybersecurity_api_server(
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    storage_path: str = "data/cybersecurity.db",
+) -> None:
+    """Run the cybersecurity API server until interrupted."""
+    service = CybersecurityMonitoringService(
+        store=CybersecurityEventStore(storage_path)
+    )
+    server = ThreadingHTTPServer(
+        (host, port),
+        build_handler(service),
+    )
+    print(f"ICSMOG cybersecurity API listening on http://{host}:{port}")
+    print(f"Using SQLite storage at {storage_path}")
+    print("Available endpoints: GET /, GET /dashboard, GET /health, GET /cybersecurity/dashboard, "
+      "GET /cybersecurity/alerts, GET /cybersecurity/import-history, POST /cybersecurity/network-events, "
+          "POST /cybersecurity/security-events, POST /cybersecurity/import/network-csv, "
+          "POST /cybersecurity/import/security-csv, POST /cybersecurity/alerts/<id>/acknowledge, "
+          "POST /cybersecurity/alerts/<id>/resolve")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nShutting down ICSMOG cybersecurity API.")
+    finally:
+        server.server_close()
+
+
+def build_handler(
+    service: CybersecurityMonitoringService,
+) -> type[BaseHTTPRequestHandler]:
+    """Create a request handler bound to a specific service instance."""
+
+    class CybersecurityAPIHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            parsed = urlsplit(self.path)
+            path = parsed.path
+            query = parse_qs(parsed.query)
+
+            if path in {"/", "/dashboard"}:
+                self._send_html(HTTPStatus.OK, render_dashboard_html())
+                return
+
+            if path.startswith("/dashboard/alerts/"):
+                alert_id = path.removeprefix("/dashboard/alerts/")
+                self._send_html(HTTPStatus.OK, render_alert_detail_html(alert_id))
+                return
+
+            if path == "/health":
+                self._send_json(
+                    HTTPStatus.OK,
+                    {"status": "ok", "service": "icsmog-cybersecurity-api"},
+                )
+                return
+
+            if path == "/cybersecurity/dashboard":
+                self._send_json(HTTPStatus.OK, service.get_dashboard())
+                return
+
+            if path.startswith("/cybersecurity/alerts/"):
+                alert_id = path.removeprefix("/cybersecurity/alerts/")
+                alert = service.get_alert_by_id(alert_id)
+                if alert is None:
+                    self._send_json(
+                        HTTPStatus.NOT_FOUND,
+                        {"error": "Alert not found", "alert_id": alert_id},
+                    )
+                    return
+                self._send_json(HTTPStatus.OK, alert)
+                return
+
+            if path == "/cybersecurity/alerts":
+                try:
+                    alerts = service.get_alerts(
+                        threat_level=_get_query_value(query, "threat_level"),
+                        status=_get_query_value(query, "status"),
+                        source_ip=_get_query_value(query, "source_ip"),
+                        limit=_get_query_int(query, "limit"),
+                    )
+                except ValueError as exc:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                self._send_json(
+                    HTTPStatus.OK,
+                    {
+                        "alerts": alerts,
+                        "triggered_rules": service.get_triggered_rules(),
+                    },
+                )
+                return
+
+            if path == "/cybersecurity/import-history":
+                try:
+                    limit = _get_query_int(query, "limit") or 20
+                except ValueError as exc:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                self._send_json(
+                    HTTPStatus.OK,
+                    {
+                        "imports": service.get_import_history(limit=limit),
+                    },
+                )
+                return
+
+            self._send_json(
+                HTTPStatus.NOT_FOUND,
+                {"error": "Not found", "path": path},
+            )
+
+        def do_POST(self) -> None:  # noqa: N802
+            path = urlsplit(self.path).path
+
+            if path.startswith("/cybersecurity/alerts/") and path.endswith(
+                "/acknowledge"
+            ):
+                alert_id = path.removeprefix("/cybersecurity/alerts/").removesuffix(
+                    "/acknowledge"
+                )
+                try:
+                    result = service.acknowledge_alert(alert_id)
+                except ValueError as exc:
+                    self._send_json(
+                        HTTPStatus.NOT_FOUND
+                        if "not found" in str(exc).lower()
+                        else HTTPStatus.BAD_REQUEST,
+                        {"error": str(exc), "alert_id": alert_id},
+                    )
+                    return
+                self._send_json(HTTPStatus.OK, result)
+                return
+
+            if path.startswith("/cybersecurity/alerts/") and path.endswith("/resolve"):
+                alert_id = path.removeprefix("/cybersecurity/alerts/").removesuffix(
+                    "/resolve"
+                )
+                try:
+                    result = service.resolve_alert(alert_id)
+                except ValueError as exc:
+                    self._send_json(
+                        HTTPStatus.NOT_FOUND
+                        if "not found" in str(exc).lower()
+                        else HTTPStatus.BAD_REQUEST,
+                        {"error": str(exc), "alert_id": alert_id},
+                    )
+                    return
+                self._send_json(HTTPStatus.OK, result)
+                return
+
+            if path == "/cybersecurity/import/network-csv":
+                payload, error = self._read_json_body()
+                if error is not None:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": error})
+                    return
+                try:
+                    result = service.import_network_csv(payload)
+                except ValueError as exc:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                self._send_json(HTTPStatus.CREATED, result)
+                return
+
+            if path == "/cybersecurity/import/security-csv":
+                payload, error = self._read_json_body()
+                if error is not None:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": error})
+                    return
+                try:
+                    result = service.import_security_csv(payload)
+                except ValueError as exc:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                self._send_json(HTTPStatus.CREATED, result)
+                return
+
+            if path not in {
+                "/cybersecurity/network-events",
+                "/cybersecurity/security-events",
+            }:
+                self._send_json(
+                    HTTPStatus.NOT_FOUND,
+                    {"error": "Not found", "path": path},
+                )
+                return
+
+            payload, error = self._read_json_body()
+            if error is not None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": error})
+                return
+
+            if path == "/cybersecurity/network-events":
+                try:
+                    result = service.ingest_network_payload(payload)
+                except ValueError as exc:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                self._send_json(HTTPStatus.CREATED, result)
+                return
+
+            if path == "/cybersecurity/security-events":
+                try:
+                    result = service.ingest_security_payload(payload)
+                except ValueError as exc:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                self._send_json(HTTPStatus.CREATED, result)
+                return
+
+        def log_message(self, format: str, *args: object) -> None:
+            """Keep API output quiet during tests and CLI runs."""
+            return
+
+        def _read_json_body(self) -> Tuple[Dict[str, Any], str | None]:
+            content_length = self.headers.get("Content-Length")
+            if not content_length:
+                return {}, "Request body is required"
+
+            try:
+                raw_body = self.rfile.read(int(content_length))
+            except ValueError:
+                return {}, "Invalid Content-Length header"
+
+            try:
+                payload = json.loads(raw_body)
+            except json.JSONDecodeError:
+                return {}, "Request body must be valid JSON"
+
+            if not isinstance(payload, dict):
+                return {}, "Request body must be a JSON object"
+            return payload, None
+
+        def _send_json(self, status: HTTPStatus, payload: Dict[str, Any]) -> None:
+            body = json.dumps(payload, indent=2).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _send_html(self, status: HTTPStatus, payload: str) -> None:
+            body = payload.encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    return CybersecurityAPIHandler
+
+
+def _get_query_value(query: Dict[str, list[str]], key: str) -> str | None:
+    value = query.get(key, [None])[0]
+    if value is None or value == "":
+        return None
+    return value
+
+
+def _get_query_int(query: Dict[str, list[str]], key: str) -> int | None:
+    value = _get_query_value(query, key)
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise ValueError(f"Query parameter '{key}' must be an integer") from exc
+    return parsed if parsed > 0 else None

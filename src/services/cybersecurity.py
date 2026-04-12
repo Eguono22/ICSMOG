@@ -1,0 +1,529 @@
+"""Reusable cybersecurity workflows for demos, tests, and future APIs."""
+
+from __future__ import annotations
+
+import datetime
+import hashlib
+import csv
+import io
+import json
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional
+
+from src.cybersecurity import (
+    IntrusionPreventionSystem,
+    SecurityInformationEventManagement,
+)
+from src.cybersecurity.ids_ips import Alert, AlertStatus, NetworkEvent
+from src.cybersecurity.siem import (
+    EventCategory,
+    EventSeverity,
+    SecurityEvent,
+)
+from src.storage import CybersecurityEventStore
+
+
+class CybersecurityMonitoringService:
+    """Stateful service for ingesting events and querying current security state."""
+
+    def __init__(
+        self,
+        ips: Optional[IntrusionPreventionSystem] = None,
+        siem: Optional[SecurityInformationEventManagement] = None,
+        store: Optional[CybersecurityEventStore] = None,
+    ) -> None:
+        self.ips = ips or IntrusionPreventionSystem()
+        self.siem = siem or SecurityInformationEventManagement()
+        self.store = store
+        self._rehydrate_from_store()
+
+    def ingest_network_events(self, events: Iterable[NetworkEvent]) -> Dict[str, Any]:
+        event_list = list(events)
+        latest_alert = self._ingest_network_events(event_list)
+        if self.store is not None:
+            self.store.save_network_events(event_list)
+        return {
+            "ingested_events": len(event_list),
+            "latest_alert": latest_alert.description if latest_alert else None,
+            "auto_blocked_ips": self.ips.auto_blocked_ips,
+            "dashboard": self.get_dashboard()["ips"],
+        }
+
+    def ingest_security_events(self, events: Iterable[SecurityEvent]) -> Dict[str, Any]:
+        event_list = list(events)
+        self._ingest_security_events(event_list)
+        if self.store is not None:
+            self.store.save_security_events(event_list)
+        return {
+            "ingested_events": len(event_list),
+            "dashboard": self.get_dashboard()["siem"],
+            "triggered_rules": self.get_triggered_rules(),
+        }
+
+    def ingest_network_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return self.ingest_network_events(_parse_network_events(payload))
+
+    def ingest_security_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return self.ingest_security_events(_parse_security_events(payload))
+
+    def import_network_csv(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        imported_from = _describe_csv_source(payload)
+        try:
+            events = _load_network_events_from_csv_payload(payload)
+            result = self.ingest_network_events(events)
+        except ValueError as exc:
+            if self.store is not None:
+                self.store.record_import_history(
+                    imported_from,
+                    "network_csv",
+                    status="failed",
+                    error_message=str(exc),
+                )
+            raise
+        if self.store is not None:
+            self.store.record_import_history(
+                imported_from,
+                "network_csv",
+                status="success",
+            )
+        result["imported_from"] = imported_from
+        return result
+
+    def import_security_csv(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        imported_from = _describe_csv_source(payload)
+        try:
+            events = _load_security_events_from_csv_payload(payload)
+            result = self.ingest_security_events(events)
+        except ValueError as exc:
+            if self.store is not None:
+                self.store.record_import_history(
+                    imported_from,
+                    "security_csv",
+                    status="failed",
+                    error_message=str(exc),
+                )
+            raise
+        if self.store is not None:
+            self.store.record_import_history(
+                imported_from,
+                "security_csv",
+                status="success",
+            )
+        result["imported_from"] = imported_from
+        return result
+
+    def get_alerts(
+        self,
+        threat_level: Optional[str] = None,
+        status: Optional[str] = None,
+        source_ip: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        alerts = [_serialize_alert(alert) for alert in self.ips.alerts]
+        if threat_level is not None:
+            alerts = [alert for alert in alerts if alert["threat_level"] == threat_level]
+        if status is not None:
+            alerts = [alert for alert in alerts if alert["status"] == status]
+        if source_ip is not None:
+            alerts = [alert for alert in alerts if alert["source_ip"] == source_ip]
+        alerts.sort(key=lambda alert: alert["created_at"], reverse=True)
+        if limit is not None:
+            alerts = alerts[:limit]
+        return alerts
+
+    def get_alert_by_id(self, alert_id: str) -> Optional[Dict[str, Any]]:
+        for alert in self.get_alerts():
+            if alert["alert_id"] == alert_id:
+                return alert
+        return None
+
+    def acknowledge_alert(self, alert_id: str) -> Dict[str, Any]:
+        alert = self._find_alert_object(alert_id)
+        if alert is None:
+            raise ValueError(f"Alert '{alert_id}' was not found")
+        if alert.status == AlertStatus.RESOLVED:
+            raise ValueError("Resolved alerts cannot be acknowledged")
+        alert.acknowledge()
+        self._persist_alert_state(alert)
+        return _serialize_alert(alert)
+
+    def resolve_alert(self, alert_id: str) -> Dict[str, Any]:
+        alert = self._find_alert_object(alert_id)
+        if alert is None:
+            raise ValueError(f"Alert '{alert_id}' was not found")
+        alert.resolve()
+        self._persist_alert_state(alert)
+        return _serialize_alert(alert)
+
+    def get_triggered_rules(self) -> List[Dict[str, Any]]:
+        return self.siem.get_triggered_rules()
+
+    def get_dashboard(self) -> Dict[str, Any]:
+        return {
+            "ips": self.ips.get_summary(),
+            "siem": self.siem.get_dashboard(),
+        }
+
+    def get_import_history(self, limit: int = 20) -> List[Dict[str, str]]:
+        if self.store is None:
+            return []
+        return self.store.load_import_history(limit=limit)
+
+    def _ingest_network_events(
+        self,
+        events: List[NetworkEvent],
+    ) -> Optional[Alert]:
+        latest_alert: Optional[Alert] = None
+
+        for event in events:
+            alert = self.ips.analyze_event(event)
+            if alert is not None:
+                latest_alert = alert
+                if alert.created_at > event.timestamp:
+                    alert.created_at = event.timestamp
+
+        return latest_alert
+
+    def _ingest_security_events(self, events: List[SecurityEvent]) -> None:
+        self.siem.ingest_events(events)
+
+    def _rehydrate_from_store(self) -> None:
+        if self.store is None:
+            return
+        historical_network_events = self.store.load_network_events()
+        if historical_network_events:
+            self._ingest_network_events(historical_network_events)
+        historical_security_events = self.store.load_security_events()
+        if historical_security_events:
+            self._ingest_security_events(historical_security_events)
+        self._apply_persisted_alert_states()
+
+    def _find_alert_object(self, alert_id: str) -> Optional[Alert]:
+        for alert in self.ips.alerts:
+            if _serialize_alert(alert)["alert_id"] == alert_id:
+                return alert
+        return None
+
+    def _persist_alert_state(self, alert: Alert) -> None:
+        if self.store is None:
+            return
+        serialized = _serialize_alert(alert)
+        self.store.upsert_alert_state(
+            alert_id=serialized["alert_id"],
+            status=serialized["status"],
+            resolved_at=serialized["resolved_at"],
+        )
+
+    def _apply_persisted_alert_states(self) -> None:
+        if self.store is None:
+            return
+        for alert_id, state in self.store.load_alert_states().items():
+            alert = self._find_alert_object(alert_id)
+            if alert is None:
+                continue
+            status = state["status"]
+            resolved_at = state["resolved_at"]
+            if status == AlertStatus.ACKNOWLEDGED.value:
+                alert.status = AlertStatus.ACKNOWLEDGED
+            elif status == AlertStatus.RESOLVED.value:
+                alert.status = AlertStatus.RESOLVED
+                alert.resolved_at = (
+                    datetime.datetime.fromisoformat(resolved_at)
+                    if resolved_at
+                    else alert.resolved_at
+                )
+
+
+def build_sample_network_events() -> List[NetworkEvent]:
+    """Return the default network events used by the CLI demo."""
+    return [
+        NetworkEvent(
+            source_ip="192.168.1.10",
+            destination_ip="10.0.0.1",
+            port=80,
+            protocol="HTTP",
+            payload_size=512,
+        ),
+        NetworkEvent(
+            source_ip="203.0.113.5",
+            destination_ip="10.0.0.1",
+            port=22,
+            protocol="SSH",
+            payload_size=256,
+        ),
+    ]
+
+
+def build_sample_security_events() -> List[SecurityEvent]:
+    """Return the default SIEM events used by the CLI demo."""
+    return [
+        SecurityEvent(
+            source="auth-service",
+            category=EventCategory.AUTHENTICATION,
+            severity=EventSeverity.ERROR,
+            message="Login failed",
+        )
+        for _ in range(5)
+    ]
+
+
+def process_network_events(
+    events: Iterable[NetworkEvent],
+    ips: Optional[IntrusionPreventionSystem] = None,
+) -> Dict[str, Any]:
+    """Analyze network events and return an alert summary."""
+    service = CybersecurityMonitoringService(ips=ips)
+    result = service.ingest_network_events(events)
+    return {
+        "alert": result["latest_alert"],
+        "auto_blocked_ips": service.ips.auto_blocked_ips,
+        "summary": service.ips.get_summary(),
+    }
+
+
+def process_security_events(
+    events: Iterable[SecurityEvent],
+    siem: Optional[SecurityInformationEventManagement] = None,
+) -> Dict[str, Any]:
+    """Ingest security events and return a SIEM summary."""
+    service = CybersecurityMonitoringService(siem=siem)
+    service.ingest_security_events(events)
+    return {
+        "dashboard": service.siem.get_dashboard(),
+        "triggered_rules": service.siem.get_triggered_rules(),
+    }
+
+
+def run_sample_cybersecurity_scenario(verbose: bool = True) -> Dict[str, Any]:
+    """Run the default cybersecurity workflow used by the CLI demo."""
+    if verbose:
+        print("\n=== 1. Network & Cybersecurity Monitoring ===")
+
+    ips_result = process_network_events(build_sample_network_events())
+    if verbose:
+        print(f"  IPS alert: {ips_result['alert'] if ips_result['alert'] else 'None'}")
+        print(f"  Auto-blocked IPs: {ips_result['auto_blocked_ips']}")
+
+    siem_result = process_security_events(build_sample_security_events())
+    if verbose:
+        print(f"  SIEM dashboard: {siem_result['dashboard']}")
+
+    return {
+        "ips": ips_result,
+        "siem": siem_result,
+    }
+
+
+def _parse_network_events(payload: Dict[str, Any]) -> List[NetworkEvent]:
+    raw_events = _require_event_list(payload, "events")
+    return [_parse_network_event(item) for item in raw_events]
+
+
+def _parse_security_events(payload: Dict[str, Any]) -> List[SecurityEvent]:
+    raw_events = _require_event_list(payload, "events")
+    return [_parse_security_event(item) for item in raw_events]
+
+
+def _require_event_list(payload: Dict[str, Any], key: str) -> List[Dict[str, Any]]:
+    events = payload.get(key)
+    if not isinstance(events, list) or not events:
+        raise ValueError(f"'{key}' must be a non-empty list")
+    if not all(isinstance(item, dict) for item in events):
+        raise ValueError(f"'{key}' entries must be JSON objects")
+    return events
+
+
+def _parse_network_event(data: Dict[str, Any]) -> NetworkEvent:
+    required = [
+        "source_ip",
+        "destination_ip",
+        "port",
+        "protocol",
+        "payload_size",
+    ]
+    missing = [
+        field
+        for field in required
+        if field not in data or data[field] in {None, ""}
+    ]
+    if missing:
+        raise ValueError(
+            "Missing network event fields: " + ", ".join(sorted(missing))
+        )
+    return NetworkEvent(
+        source_ip=str(data["source_ip"]),
+        destination_ip=str(data["destination_ip"]),
+        port=int(data["port"]),
+        protocol=str(data["protocol"]),
+        payload_size=int(data["payload_size"]),
+        timestamp=_parse_optional_timestamp(data.get("timestamp")),
+        metadata=data.get("metadata", {}),
+    )
+
+
+def _parse_security_event(data: Dict[str, Any]) -> SecurityEvent:
+    required = ["source", "category", "severity", "message"]
+    missing = [
+        field
+        for field in required
+        if field not in data or data[field] in {None, ""}
+    ]
+    if missing:
+        raise ValueError(
+            "Missing security event fields: " + ", ".join(sorted(missing))
+        )
+    return SecurityEvent(
+        source=str(data["source"]),
+        category=_parse_enum(
+            data["category"],
+            EventCategory,
+            "category",
+        ),
+        severity=_parse_enum(
+            data["severity"],
+            EventSeverity,
+            "severity",
+        ),
+        message=str(data["message"]),
+        timestamp=_parse_optional_timestamp(data.get("timestamp")),
+        raw_data=data.get("raw_data", {}),
+    )
+
+
+def _parse_enum(value: Any, enum_type: Any, field_name: str) -> Any:
+    try:
+        return enum_type(str(value))
+    except ValueError as exc:
+        allowed_values = ", ".join(item.value for item in enum_type)
+        raise ValueError(
+            f"Invalid {field_name} '{value}'. Allowed values: {allowed_values}"
+        ) from exc
+
+
+def _parse_optional_timestamp(value: Any) -> datetime.datetime:
+    if value is None:
+        return datetime.datetime.now(datetime.UTC)
+    if not isinstance(value, str):
+        raise ValueError("timestamp must be an ISO 8601 string")
+    try:
+        return datetime.datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError("timestamp must be a valid ISO 8601 string") from exc
+
+
+def _load_network_events_from_csv_payload(payload: Dict[str, Any]) -> List[NetworkEvent]:
+    rows = _load_csv_rows(payload)
+    events: List[NetworkEvent] = []
+    for row in rows:
+        event_payload: Dict[str, Any] = {
+            "source_ip": row.get("source_ip"),
+            "destination_ip": row.get("destination_ip"),
+            "port": row.get("port"),
+            "protocol": row.get("protocol"),
+            "payload_size": row.get("payload_size"),
+        }
+        if row.get("timestamp"):
+            event_payload["timestamp"] = row["timestamp"]
+        if row.get("metadata"):
+            event_payload["metadata"] = _parse_json_cell(row["metadata"], "metadata")
+        events.append(_parse_network_event(event_payload))
+    return events
+
+
+def _load_security_events_from_csv_payload(payload: Dict[str, Any]) -> List[SecurityEvent]:
+    rows = _load_csv_rows(payload)
+    events: List[SecurityEvent] = []
+    for row in rows:
+        event_payload: Dict[str, Any] = {
+            "source": row.get("source"),
+            "category": row.get("category"),
+            "severity": row.get("severity"),
+            "message": row.get("message"),
+        }
+        if row.get("timestamp"):
+            event_payload["timestamp"] = row["timestamp"]
+        if row.get("raw_data"):
+            event_payload["raw_data"] = _parse_json_cell(row["raw_data"], "raw_data")
+        events.append(_parse_security_event(event_payload))
+    return events
+
+
+def _load_csv_rows(payload: Dict[str, Any]) -> List[Dict[str, str]]:
+    csv_text = payload.get("csv_text")
+    csv_path = payload.get("csv_path")
+    if bool(csv_text) == bool(csv_path):
+        raise ValueError("Provide exactly one of 'csv_text' or 'csv_path'")
+
+    if csv_text:
+        if not isinstance(csv_text, str):
+            raise ValueError("'csv_text' must be a string")
+        source = io.StringIO(csv_text)
+    else:
+        if not isinstance(csv_path, str):
+            raise ValueError("'csv_path' must be a string")
+        path = Path(csv_path)
+        if not path.exists():
+            raise ValueError(f"CSV file '{csv_path}' was not found")
+        source = path.open("r", encoding="utf-8", newline="")
+
+    with source:
+        reader = csv.DictReader(source)
+        if not reader.fieldnames:
+            raise ValueError("CSV input must include a header row")
+        rows = list(reader)
+
+    if not rows:
+        raise ValueError("CSV input must include at least one data row")
+    return rows
+
+
+def _parse_json_cell(value: str, field_name: str) -> Dict[str, Any]:
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"CSV column '{field_name}' must contain valid JSON") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError(f"CSV column '{field_name}' must contain a JSON object")
+    return parsed
+
+
+def _describe_csv_source(payload: Dict[str, Any]) -> str:
+    if payload.get("csv_path"):
+        return str(payload["csv_path"])
+    if payload.get("csv_text") is not None:
+        return "inline_csv_text"
+    return "unknown_csv_source"
+
+
+def _serialize_alert(alert: Alert) -> Dict[str, Any]:
+    serialized = {
+        "source_ip": alert.event.source_ip,
+        "destination_ip": alert.event.destination_ip,
+        "port": alert.event.port,
+        "protocol": alert.event.protocol,
+        "payload_size": alert.event.payload_size,
+        "threat_level": alert.threat_level.value,
+        "description": alert.description,
+        "status": alert.status.value,
+        "created_at": alert.created_at.isoformat(),
+        "resolved_at": (
+            alert.resolved_at.isoformat() if alert.resolved_at else None
+        ),
+    }
+    serialized["alert_id"] = _build_alert_id(serialized)
+    return serialized
+
+
+def _build_alert_id(serialized_alert: Dict[str, Any]) -> str:
+    fingerprint = "|".join(
+        [
+            serialized_alert["source_ip"],
+            serialized_alert["destination_ip"],
+            str(serialized_alert["port"]),
+            serialized_alert["protocol"],
+            str(serialized_alert["payload_size"]),
+            serialized_alert["created_at"],
+            serialized_alert["description"],
+        ]
+    )
+    return hashlib.sha1(fingerprint.encode("utf-8")).hexdigest()[:12]

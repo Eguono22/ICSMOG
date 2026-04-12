@@ -1,0 +1,6 @@
+source,category,severity,message,timestamp,raw_data
+auth-service,authentication,error,Login failed,2026-04-12T18:05:00+00:00,"{""username"": ""analyst01"", ""ip"": ""198.51.100.55""}"
+auth-service,authentication,error,Login failed,2026-04-12T18:05:10+00:00,"{""username"": ""analyst01"", ""ip"": ""198.51.100.55""}"
+auth-service,authentication,error,Login failed,2026-04-12T18:05:20+00:00,"{""username"": ""analyst01"", ""ip"": ""198.51.100.55""}"
+auth-service,authentication,error,Login failed,2026-04-12T18:05:30+00:00,"{""username"": ""analyst01"", ""ip"": ""198.51.100.55""}"
+auth-service,authentication,error,Login failed,2026-04-12T18:05:40+00:00,"{""username"": ""analyst01"", ""ip"": ""198.51.100.55""}"

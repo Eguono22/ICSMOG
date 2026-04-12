@@ -18,61 +18,24 @@ from src.business.erp import BusinessProcess, Department
 from src.customer import CustomerRelationshipManagement, SentimentAnalyzer
 from src.customer.crm import Customer, CustomerStage, Interaction, InteractionType
 from src.customer.sentiment import DataSource, SocialPost
-from src.cybersecurity import (
-    IntrusionPreventionSystem,
-    SecurityInformationEventManagement,
-)
-from src.cybersecurity.ids_ips import NetworkEvent
-from src.cybersecurity.siem import EventCategory, EventSeverity, SecurityEvent
 from src.infrastructure import BuildingManagementSystem, IoTSensor, IoTSensorNetwork
 from src.infrastructure.bms import BuildingSystem, OperationalStatus, SystemType
 from src.infrastructure.iot_sensors import SensorType
 from src.maintenance import PredictiveMaintenanceSystem, SCADASystem
 from src.maintenance.predictive import Machine, SensorData
 from src.maintenance.scada import PLCController, ProcessVariable
+from src.api import run_cybersecurity_api_server
+from src.ingestion import run_watch_directory_loop, scan_watch_directory_once
+from src.services import run_sample_cybersecurity_scenario
+from src.storage import CybersecurityEventStore
+from src.services.cybersecurity import CybersecurityMonitoringService
 from src.workforce import WorkflowManagement, WorkforceAnalytics
 from src.workforce.analytics import EmployeeMetrics
 from src.workforce.workflow import Priority, Task, TaskStatus
 
 
 def demo_cybersecurity(verbose: bool = True) -> Dict[str, Any]:
-    if verbose:
-        print("\n=== 1. Network & Cybersecurity Monitoring ===")
-
-    # IDS/IPS
-    ips = IntrusionPreventionSystem()
-    normal_event = NetworkEvent(source_ip="192.168.1.10", destination_ip="10.0.0.1", port=80, protocol="HTTP", payload_size=512)
-    suspicious_event = NetworkEvent(source_ip="203.0.113.5", destination_ip="10.0.0.1", port=22, protocol="SSH", payload_size=256)
-    ips.analyze_event(normal_event)
-    alert = ips.analyze_event(suspicious_event)
-    if verbose:
-        print(f"  IPS alert: {alert.description if alert else 'None'}")
-        print(f"  Auto-blocked IPs: {ips.auto_blocked_ips}")
-
-    # SIEM
-    siem = SecurityInformationEventManagement()
-    for _ in range(5):
-        siem.ingest_event(SecurityEvent(
-            source="auth-service",
-            category=EventCategory.AUTHENTICATION,
-            severity=EventSeverity.ERROR,
-            message="Login failed",
-        ))
-    siem_dashboard = siem.get_dashboard()
-    if verbose:
-        print(f"  SIEM dashboard: {siem_dashboard}")
-
-    return {
-        "ips": {
-            "alert": alert.description if alert else None,
-            "auto_blocked_ips": ips.auto_blocked_ips,
-            "summary": ips.get_summary(),
-        },
-        "siem": {
-            "dashboard": siem_dashboard,
-            "triggered_rules": siem.get_triggered_rules(),
-        },
-    }
+    return run_sample_cybersecurity_scenario(verbose=verbose)
 
 
 def demo_business(verbose: bool = True) -> Dict[str, Any]:
@@ -248,6 +211,42 @@ def main() -> None:
         action="store_true",
         help="Output demo results as JSON for automation workflows.",
     )
+    parser.add_argument(
+        "--serve-api",
+        action="store_true",
+        help="Run the minimal cybersecurity HTTP API server.",
+    )
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host interface for the HTTP API server.",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Port for the HTTP API server.",
+    )
+    parser.add_argument(
+        "--storage-path",
+        default="data/cybersecurity.db",
+        help="SQLite database path for persisted cybersecurity API events.",
+    )
+    parser.add_argument(
+        "--watch-csv-dir",
+        help="Watch directory with network/ and security/ subfolders for CSV imports.",
+    )
+    parser.add_argument(
+        "--watch-once",
+        action="store_true",
+        help="Scan the watch CSV directory once and exit.",
+    )
+    parser.add_argument(
+        "--poll-interval-seconds",
+        type=int,
+        default=10,
+        help="Polling interval for the watch CSV directory.",
+    )
     args = parser.parse_args()
 
     step_map: Dict[int, Callable[[bool], Dict[str, Any]]] = {
@@ -258,6 +257,29 @@ def main() -> None:
         5: demo_maintenance,
         6: demo_customer,
     }
+
+    if args.serve_api:
+        run_cybersecurity_api_server(
+            host=args.host,
+            port=args.port,
+            storage_path=args.storage_path,
+        )
+        return
+
+    if args.watch_csv_dir:
+        service = CybersecurityMonitoringService(
+            store=CybersecurityEventStore(args.storage_path)
+        )
+        if args.watch_once:
+            summary = scan_watch_directory_once(service, args.watch_csv_dir)
+            print(json.dumps(summary, indent=2))
+            return
+        run_watch_directory_loop(
+            service=service,
+            watch_dir=args.watch_csv_dir,
+            poll_interval_seconds=args.poll_interval_seconds,
+        )
+        return
 
     if args.json:
         if args.step:

@@ -1,0 +1,3 @@
+source_ip,destination_ip,port,protocol,payload_size,timestamp,metadata
+198.51.100.55,10.0.0.20,22,SSH,256,2026-04-12T18:00:00+00:00,"{""asset"": ""vpn-gateway"", ""region"": ""eu-west""}"
+198.51.100.56,10.0.0.21,80,HTTP,18000,2026-04-12T18:01:00+00:00,"{""asset"": ""web-frontend"", ""region"": ""eu-west""}"
