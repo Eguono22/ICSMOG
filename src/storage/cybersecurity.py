@@ -6,6 +6,7 @@ import datetime
 import hashlib
 import json
 import sqlite3
+from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import List
 
@@ -25,7 +26,7 @@ class CybersecurityEventStore:
     def save_network_events(self, events: List[NetworkEvent]) -> None:
         if not events:
             return
-        with sqlite3.connect(self.db_path) as connection:
+        with _open_connection(self.db_path) as connection:
             connection.executemany(
                 """
                 INSERT INTO network_events (
@@ -55,7 +56,7 @@ class CybersecurityEventStore:
     def save_security_events(self, events: List[SecurityEvent]) -> None:
         if not events:
             return
-        with sqlite3.connect(self.db_path) as connection:
+        with _open_connection(self.db_path) as connection:
             connection.executemany(
                 """
                 INSERT INTO security_events (
@@ -81,7 +82,7 @@ class CybersecurityEventStore:
             )
 
     def load_network_events(self) -> List[NetworkEvent]:
-        with sqlite3.connect(self.db_path) as connection:
+        with _open_connection(self.db_path) as connection:
             rows = connection.execute(
                 """
                 SELECT
@@ -110,7 +111,7 @@ class CybersecurityEventStore:
         ]
 
     def load_security_events(self) -> List[SecurityEvent]:
-        with sqlite3.connect(self.db_path) as connection:
+        with _open_connection(self.db_path) as connection:
             rows = connection.execute(
                 """
                 SELECT
@@ -142,7 +143,7 @@ class CybersecurityEventStore:
         status: str,
         resolved_at: str | None,
     ) -> None:
-        with sqlite3.connect(self.db_path) as connection:
+        with _open_connection(self.db_path) as connection:
             connection.execute(
                 """
                 INSERT INTO alert_states (
@@ -160,7 +161,7 @@ class CybersecurityEventStore:
             )
 
     def load_alert_states(self) -> dict[str, dict[str, str | None]]:
-        with sqlite3.connect(self.db_path) as connection:
+        with _open_connection(self.db_path) as connection:
             rows = connection.execute(
                 """
                 SELECT
@@ -179,7 +180,7 @@ class CybersecurityEventStore:
         }
 
     def has_processed_import(self, file_key: str) -> bool:
-        with sqlite3.connect(self.db_path) as connection:
+        with _open_connection(self.db_path) as connection:
             row = connection.execute(
                 """
                 SELECT 1
@@ -196,7 +197,7 @@ class CybersecurityEventStore:
         file_path: str,
         import_type: str,
     ) -> None:
-        with sqlite3.connect(self.db_path) as connection:
+        with _open_connection(self.db_path) as connection:
             connection.execute(
                 """
                 INSERT INTO imported_files (
@@ -218,7 +219,7 @@ class CybersecurityEventStore:
         status: str = "success",
         error_message: str | None = None,
     ) -> None:
-        with sqlite3.connect(self.db_path) as connection:
+        with _open_connection(self.db_path) as connection:
             connection.execute(
                 """
                 INSERT INTO import_history (
@@ -234,7 +235,7 @@ class CybersecurityEventStore:
             )
 
     def load_import_history(self, limit: int = 20) -> list[dict[str, str]]:
-        with sqlite3.connect(self.db_path) as connection:
+        with _open_connection(self.db_path) as connection:
             rows = connection.execute(
                 """
                 SELECT
@@ -270,7 +271,7 @@ class CybersecurityEventStore:
         status: str = "success",
         details: dict | None = None,
     ) -> None:
-        with sqlite3.connect(self.db_path) as connection:
+        with _open_connection(self.db_path) as connection:
             connection.execute(
                 """
                 INSERT INTO audit_log (
@@ -292,7 +293,7 @@ class CybersecurityEventStore:
             )
 
     def load_audit_log(self, limit: int = 20) -> list[dict[str, str | dict]]:
-        with sqlite3.connect(self.db_path) as connection:
+        with _open_connection(self.db_path) as connection:
             rows = connection.execute(
                 """
                 SELECT
@@ -328,7 +329,7 @@ class CybersecurityEventStore:
         is_active: bool = True,
         created_by: str | None = None,
     ) -> None:
-        with sqlite3.connect(self.db_path) as connection:
+        with _open_connection(self.db_path) as connection:
             connection.execute(
                 """
                 INSERT INTO operator_accounts (
@@ -357,7 +358,7 @@ class CybersecurityEventStore:
             )
 
     def get_operator_account(self, username: str) -> dict[str, str | bool] | None:
-        with sqlite3.connect(self.db_path) as connection:
+        with _open_connection(self.db_path) as connection:
             row = connection.execute(
                 """
                 SELECT
@@ -386,7 +387,7 @@ class CybersecurityEventStore:
         }
 
     def list_operator_accounts(self) -> list[dict[str, str | bool | None]]:
-        with sqlite3.connect(self.db_path) as connection:
+        with _open_connection(self.db_path) as connection:
             rows = connection.execute(
                 """
                 SELECT
@@ -413,7 +414,7 @@ class CybersecurityEventStore:
         ]
 
     def count_operator_accounts(self) -> int:
-        with sqlite3.connect(self.db_path) as connection:
+        with _open_connection(self.db_path) as connection:
             row = connection.execute(
                 """
                 SELECT COUNT(*)
@@ -423,7 +424,7 @@ class CybersecurityEventStore:
         return int(row[0]) if row is not None else 0
 
     def _initialize(self) -> None:
-        with sqlite3.connect(self.db_path) as connection:
+        with _open_connection(self.db_path) as connection:
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS network_events (
@@ -562,3 +563,9 @@ def _parse_timestamp(value: str) -> datetime.datetime:
 
 def _hash_api_key(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+@contextmanager
+def _open_connection(db_path: Path):
+    with closing(sqlite3.connect(db_path)) as connection, connection:
+        yield connection

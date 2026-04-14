@@ -280,15 +280,56 @@ class CybersecurityMonitoringService:
         threat_level: Optional[str] = None,
         status: Optional[str] = None,
         source_ip: Optional[str] = None,
+        destination_ip: Optional[str] = None,
+        protocol: Optional[str] = None,
+        port: Optional[int] = None,
+        query: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
+        threat_level = _normalize_optional_filter(threat_level)
+        status = _normalize_optional_filter(status)
+        source_ip = _normalize_optional_filter(source_ip)
+        destination_ip = _normalize_optional_filter(destination_ip)
+        protocol = _normalize_optional_filter(protocol)
+        query = _normalize_optional_filter(query)
+        if port is not None and port <= 0:
+            raise ValueError("port must be greater than 0")
+
         alerts = [_serialize_alert(alert) for alert in self.ips.alerts]
         if threat_level is not None:
-            alerts = [alert for alert in alerts if alert["threat_level"] == threat_level]
+            alerts = [
+                alert
+                for alert in alerts
+                if _matches_exact_filter(alert["threat_level"], threat_level)
+            ]
         if status is not None:
-            alerts = [alert for alert in alerts if alert["status"] == status]
+            alerts = [
+                alert
+                for alert in alerts
+                if _matches_exact_filter(alert["status"], status)
+            ]
         if source_ip is not None:
-            alerts = [alert for alert in alerts if alert["source_ip"] == source_ip]
+            alerts = [
+                alert
+                for alert in alerts
+                if _matches_exact_filter(alert["source_ip"], source_ip)
+            ]
+        if destination_ip is not None:
+            alerts = [
+                alert
+                for alert in alerts
+                if _matches_exact_filter(alert["destination_ip"], destination_ip)
+            ]
+        if protocol is not None:
+            alerts = [
+                alert
+                for alert in alerts
+                if _matches_exact_filter(alert["protocol"], protocol)
+            ]
+        if port is not None:
+            alerts = [alert for alert in alerts if alert["port"] == port]
+        if query is not None:
+            alerts = [alert for alert in alerts if _matches_alert_query(alert, query)]
         alerts.sort(key=lambda alert: alert["created_at"], reverse=True)
         if limit is not None:
             alerts = alerts[:limit]
@@ -835,6 +876,30 @@ def _describe_csv_source(payload: Dict[str, Any]) -> str:
     if payload.get("csv_text") is not None:
         return "inline_csv_text"
     return "unknown_csv_source"
+
+
+def _normalize_optional_filter(value: Any) -> str | None:
+    normalized = str(value).strip() if value is not None else ""
+    return normalized or None
+
+
+def _matches_exact_filter(value: Any, expected: str) -> bool:
+    return str(value).strip().lower() == expected.lower()
+
+
+def _matches_alert_query(alert: Dict[str, Any], query: str) -> bool:
+    normalized_query = query.lower()
+    searchable_fields = [
+        alert["alert_id"],
+        alert["description"],
+        alert["source_ip"],
+        alert["destination_ip"],
+        alert["protocol"],
+        alert["threat_level"],
+        alert["status"],
+        str(alert["port"]),
+    ]
+    return any(normalized_query in str(field).lower() for field in searchable_fields)
 
 
 def _normalize_operator_name(operator_name: str) -> str:

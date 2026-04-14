@@ -669,6 +669,18 @@ def render_dashboard_html() -> str:
             <label for="filter-source-ip">Source IP</label>
             <input id="filter-source-ip" type="text" placeholder="198.51.100.20">
           </div>
+          <div class="filter-field">
+            <label for="filter-destination-ip">Destination IP</label>
+            <input id="filter-destination-ip" type="text" placeholder="10.0.0.10">
+          </div>
+          <div class="filter-field">
+            <label for="filter-protocol">Protocol</label>
+            <input id="filter-protocol" type="text" placeholder="SSH">
+          </div>
+          <div class="filter-field">
+            <label for="filter-query">Search</label>
+            <input id="filter-query" type="text" placeholder="alert id, port, or description">
+          </div>
         </div>
         <div class="stack" id="alerts-list">
           <div class="empty-state">No alerts yet. Use the demo actions above or post to the API.</div>
@@ -868,6 +880,9 @@ def render_dashboard_html() -> str:
         threatLevel: "",
         status: "",
         sourceIp: "",
+        destinationIp: "",
+        protocol: "",
+        query: "",
       },
     };
 
@@ -1205,6 +1220,15 @@ def render_dashboard_html() -> str:
       if (dashboardState.filters.sourceIp) {
         params.set("source_ip", dashboardState.filters.sourceIp);
       }
+      if (dashboardState.filters.destinationIp) {
+        params.set("destination_ip", dashboardState.filters.destinationIp);
+      }
+      if (dashboardState.filters.protocol) {
+        params.set("protocol", dashboardState.filters.protocol);
+      }
+      if (dashboardState.filters.query) {
+        params.set("query", dashboardState.filters.query);
+      }
       params.set("limit", "12");
       const query = params.toString();
       return query ? `/cybersecurity/alerts?${query}` : "/cybersecurity/alerts";
@@ -1380,6 +1404,21 @@ def render_dashboard_html() -> str:
 
     document.getElementById("filter-source-ip").addEventListener("input", (event) => {
       dashboardState.filters.sourceIp = event.target.value.trim();
+      refreshDashboard();
+    });
+
+    document.getElementById("filter-destination-ip").addEventListener("input", (event) => {
+      dashboardState.filters.destinationIp = event.target.value.trim();
+      refreshDashboard();
+    });
+
+    document.getElementById("filter-protocol").addEventListener("input", (event) => {
+      dashboardState.filters.protocol = event.target.value.trim();
+      refreshDashboard();
+    });
+
+    document.getElementById("filter-query").addEventListener("input", (event) => {
+      dashboardState.filters.query = event.target.value.trim();
       refreshDashboard();
     });
 

@@ -233,6 +233,9 @@ def test_alerts_endpoint_supports_filtering_and_detail_lookup():
         )
         alert_id = filtered["alerts"][0]["alert_id"]
         detail = _read_json(f"{base_url}/cybersecurity/alerts/{alert_id}")
+        extended = _read_json(
+            f"{base_url}/cybersecurity/alerts?destination_ip=10.0.0.10&protocol=ssh&port=22&query=access%20attempt"
+        )
     finally:
         server.shutdown()
         server.server_close()
@@ -241,6 +244,29 @@ def test_alerts_endpoint_supports_filtering_and_detail_lookup():
     assert len(filtered["alerts"]) == 1
     assert filtered["alerts"][0]["threat_level"] == "high"
     assert detail["source_ip"] == "198.51.100.31"
+    assert len(extended["alerts"]) == 1
+    assert extended["alerts"][0]["alert_id"] == alert_id
+
+
+def test_alerts_endpoint_rejects_invalid_port_filter():
+    server, thread = _start_test_server()
+    base_url = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        request = urllib.request.Request(
+            f"{base_url}/cybersecurity/alerts?port=abc",
+            method="GET",
+        )
+        try:
+            urllib.request.urlopen(request)
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 400
+            error_payload = json.loads(exc.read().decode("utf-8"))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert "port" in error_payload["error"]
 
 
 def test_alert_detail_page_renders_html():

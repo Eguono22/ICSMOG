@@ -96,6 +96,10 @@ def build_handler(
                         threat_level=_get_query_value(query, "threat_level"),
                         status=_get_query_value(query, "status"),
                         source_ip=_get_query_value(query, "source_ip"),
+                        destination_ip=_get_query_value(query, "destination_ip"),
+                        protocol=_get_query_value(query, "protocol"),
+                        port=_get_query_int(query, "port"),
+                        query=_get_query_value(query, "query"),
                         limit=_get_query_int(query, "limit"),
                     )
                 except ValueError as exc:

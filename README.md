@@ -27,6 +27,7 @@ What works well now:
 - built-in cybersecurity dashboard served from the same API process
 - local operator accounts with role-based access for protected workflows
 - persistent operator audit trails for imports and alert lifecycle changes
+- API and dashboard alert filtering by severity, status, IPs, protocol, port, and free-text search
 - unit tests covering the existing domain modules
 
 What is not built yet:
