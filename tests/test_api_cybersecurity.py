@@ -302,7 +302,66 @@ def test_alert_detail_page_renders_html():
 
     assert alert_id in html
     assert "Alert Investigation" in html
+    assert "Investigation Timeline" in html
+    assert "Related Alerts" in html
     assert "text/html" in content_type
+
+
+def test_alert_investigation_endpoint_returns_activity_and_related_alerts():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        server, thread = _start_test_server(
+            CybersecurityMonitoringService(
+                store=CybersecurityEventStore(f"{temp_dir}/cybersecurity.db")
+            )
+        )
+        base_url = f"http://127.0.0.1:{server.server_address[1]}"
+        try:
+            _read_json(
+                f"{base_url}/cybersecurity/network-events",
+                method="POST",
+                payload={
+                    "events": [
+                        {
+                            "source_ip": "198.51.100.55",
+                            "destination_ip": "10.0.0.12",
+                            "port": 22,
+                            "protocol": "SSH",
+                            "payload_size": 120,
+                        },
+                        {
+                            "source_ip": "198.51.100.55",
+                            "destination_ip": "10.0.0.99",
+                            "port": 80,
+                            "protocol": "HTTP",
+                            "payload_size": 20000,
+                        },
+                    ]
+                },
+            )
+            alerts = _read_json(f"{base_url}/cybersecurity/alerts")
+            alert_id = next(
+                alert["alert_id"]
+                for alert in alerts["alerts"]
+                if alert["destination_ip"] == "10.0.0.12"
+            )
+            _read_json(
+                f"{base_url}/cybersecurity/alerts/{alert_id}/acknowledge",
+                method="POST",
+                payload={},
+                headers=ANALYST_HEADERS,
+            )
+            investigation = _read_json(
+                f"{base_url}/cybersecurity/alerts/{alert_id}/investigation"
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    assert investigation["alert"]["alert_id"] == alert_id
+    assert investigation["activity_log"][0]["action_type"] == "acknowledge_alert"
+    assert investigation["related_alerts"][0]["source_ip"] == "198.51.100.55"
+    assert investigation["related_alerts"][0]["relationship"] == "source_ip"
 
 
 def test_alert_lifecycle_endpoints_update_status():

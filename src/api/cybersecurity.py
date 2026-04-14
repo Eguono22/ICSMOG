@@ -31,7 +31,7 @@ def run_cybersecurity_api_server(
     print(f"ICSMOG cybersecurity API listening on http://{host}:{port}")
     print(f"Using SQLite storage at {storage_path}")
     print("Available endpoints: GET /, GET /dashboard, GET /health, GET /cybersecurity/dashboard, "
-      "GET /cybersecurity/alerts, GET /cybersecurity/import-history, GET /cybersecurity/audit-log, GET /cybersecurity/me, "
+      "GET /cybersecurity/alerts, GET /cybersecurity/alerts/<id>/investigation, GET /cybersecurity/import-history, GET /cybersecurity/audit-log, GET /cybersecurity/me, "
       "GET /cybersecurity/operators, POST /cybersecurity/login, POST /cybersecurity/logout, "
       "POST /cybersecurity/operators, POST /cybersecurity/import/scan-directory, POST /cybersecurity/network-events, "
           "POST /cybersecurity/security-events, POST /cybersecurity/import/network-csv, "
@@ -76,6 +76,26 @@ def build_handler(
 
             if path == "/cybersecurity/dashboard":
                 self._send_json(HTTPStatus.OK, service.get_dashboard())
+                return
+
+            if path.startswith("/cybersecurity/alerts/") and path.endswith(
+                "/investigation"
+            ):
+                alert_id = path.removeprefix("/cybersecurity/alerts/").removesuffix(
+                    "/investigation"
+                )
+                investigation = service.get_alert_investigation(
+                    alert_id,
+                    activity_limit=_get_query_int(query, "activity_limit") or 10,
+                    related_limit=_get_query_int(query, "related_limit") or 5,
+                )
+                if investigation is None:
+                    self._send_json(
+                        HTTPStatus.NOT_FOUND,
+                        {"error": "Alert not found", "alert_id": alert_id},
+                    )
+                    return
+                self._send_json(HTTPStatus.OK, investigation)
                 return
 
             if path.startswith("/cybersecurity/alerts/"):

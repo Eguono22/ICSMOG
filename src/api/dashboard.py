@@ -1680,6 +1680,48 @@ def render_alert_detail_html(alert_id: str) -> str:
       font-size: 14px;
     }}
 
+    .stack {{
+      display: grid;
+      gap: 12px;
+    }}
+
+    .timeline-card,
+    .mini-card {{
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.56);
+    }}
+
+    .card-title {{
+      font-weight: 700;
+      margin-bottom: 6px;
+    }}
+
+    .card-meta {{
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.5;
+    }}
+
+    .chip-row {{
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }}
+
+    .chip {{
+      display: inline-flex;
+      padding: 5px 10px;
+      border-radius: 999px;
+      background: rgba(23, 36, 45, 0.08);
+      color: var(--ink);
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }}
+
     @media (max-width: 700px) {{
       .credential-grid {{
         grid-template-columns: 1fr;
@@ -1720,6 +1762,18 @@ def render_alert_detail_html(alert_id: str) -> str:
       <h2>Evidence</h2>
       <div class="grid" id="detail-grid">
         <div class="empty">Loading alert details...</div>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>Investigation Timeline</h2>
+      <div class="stack" id="activity-log">
+        <div class="empty">Loading alert activity...</div>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>Related Alerts</h2>
+      <div class="stack" id="related-alerts">
+        <div class="empty">Looking for nearby detections...</div>
       </div>
     </section>
     <section class="panel">
@@ -1781,23 +1835,27 @@ def render_alert_detail_html(alert_id: str) -> str:
       return payload;
     }}
 
-    async function loadAlert() {{
-      const response = await fetch(`/cybersecurity/alerts/${{encodeURIComponent(alertId)}}`);
+    async function loadInvestigation() {{
+      const response = await fetch(`/cybersecurity/alerts/${{encodeURIComponent(alertId)}}/investigation`);
       if (response.status === 404) {{
         document.getElementById("alert-title").textContent = "Alert not found";
         document.getElementById("alert-copy").textContent = "The requested alert is not present in the persisted history.";
         document.getElementById("detail-grid").innerHTML = '<div class="empty">Try returning to the dashboard and selecting a different alert.</div>';
+        document.getElementById("activity-log").innerHTML = '<div class="empty">No activity is available for this alert.</div>';
+        document.getElementById("related-alerts").innerHTML = '<div class="empty">No related alerts are available.</div>';
         document.getElementById("raw-json").textContent = '{{"error": "Alert not found"}}';
         return;
       }}
       const payload = await response.json();
-      render(payload);
+      renderInvestigation(payload);
+      return payload;
     }}
 
-    function render(alert) {{
+    function renderInvestigation(payload) {{
+      const alert = payload.alert;
       document.getElementById("alert-title").textContent = alert.description;
       document.getElementById("alert-copy").textContent =
-        `Alert ${{alert.alert_id}} was raised for ${{alert.source_ip}} targeting ${{alert.destination_ip}} on port ${{alert.port}}.`;
+        `Alert ${{alert.alert_id}} was raised for ${{alert.source_ip}} targeting ${{alert.destination_ip}} on port ${{alert.port}}, with investigation context loaded from persisted history.`;
       document.getElementById("action-status").textContent =
         `Current status: ${{alert.status}}.`;
       document.getElementById("acknowledge-button").disabled = alert.status === "resolved";
@@ -1819,7 +1877,52 @@ def render_alert_detail_html(alert_id: str) -> str:
           <div class="value">${{escapeHtml(value)}}</div>
         </article>
       `).join('');
-      document.getElementById("raw-json").textContent = JSON.stringify(alert, null, 2);
+      renderActivityLog(payload.activity_log || []);
+      renderRelatedAlerts(payload.related_alerts || []);
+      document.getElementById("raw-json").textContent = JSON.stringify(payload, null, 2);
+    }}
+
+    function renderActivityLog(entries) {{
+      const node = document.getElementById("activity-log");
+      if (!entries.length) {{
+        node.innerHTML = '<div class="empty">No lifecycle actions have been recorded for this alert yet.</div>';
+        return;
+      }}
+      node.innerHTML = entries.map((entry) => `
+        <article class="timeline-card">
+          <div class="card-title">${{escapeHtml(entry.action_type.replaceAll("_", " "))}}</div>
+          <div class="card-meta">
+            Operator ${{escapeHtml(entry.operator_name)}} changed target ${{escapeHtml(entry.target)}} with status ${{escapeHtml(entry.status)}}.
+          </div>
+          <div class="chip-row">
+            <span class="chip">${{escapeHtml(formatTimestamp(entry.created_at))}}</span>
+            <span class="chip">${{escapeHtml((entry.details?.status || entry.status || "recorded"))}}</span>
+          </div>
+        </article>
+      `).join("");
+    }}
+
+    function renderRelatedAlerts(alerts) {{
+      const node = document.getElementById("related-alerts");
+      if (!alerts.length) {{
+        node.innerHTML = '<div class="empty">No related alerts share this source or destination IP right now.</div>';
+        return;
+      }}
+      node.innerHTML = alerts.map((alert) => `
+        <a class="back-link" href="/dashboard/alerts/${{encodeURIComponent(alert.alert_id)}}">
+          <article class="mini-card">
+            <div class="card-title">${{escapeHtml(alert.description)}}</div>
+            <div class="card-meta">
+              ${{escapeHtml(alert.source_ip)}} -> ${{escapeHtml(alert.destination_ip)}} | Port ${{escapeHtml(String(alert.port))}} | Status ${{escapeHtml(alert.status)}}
+            </div>
+            <div class="chip-row">
+              <span class="chip">${{escapeHtml(alert.relationship.replaceAll("_", " "))}}</span>
+              <span class="chip">${{escapeHtml(alert.threat_level)}}</span>
+              <span class="chip">${{escapeHtml(formatTimestamp(alert.created_at))}}</span>
+            </div>
+          </article>
+        </a>
+      `).join("");
     }}
 
     async function applyAction(action) {{
@@ -1831,7 +1934,7 @@ def render_alert_detail_html(alert_id: str) -> str:
       if (!response.ok) {{
         throw new Error(payload.error || `Unable to ${{action}} alert`);
       }}
-      render(payload);
+      await loadInvestigation();
       document.getElementById("action-status").textContent =
         `Alert updated by ${{payload.updated_by}}: status is now ${{payload.status}}.`;
     }}
@@ -1853,10 +1956,12 @@ def render_alert_detail_html(alert_id: str) -> str:
         .replaceAll("'", "&#39;");
     }}
 
-    loadAlert().catch((error) => {{
+    loadInvestigation().catch((error) => {{
       document.getElementById("alert-title").textContent = "Alert load failed";
       document.getElementById("alert-copy").textContent = error.message;
       document.getElementById("detail-grid").innerHTML = '<div class="empty">The alert details could not be loaded from the API.</div>';
+      document.getElementById("activity-log").innerHTML = '<div class="empty">The investigation timeline could not be loaded from the API.</div>';
+      document.getElementById("related-alerts").innerHTML = '<div class="empty">Related alert context could not be loaded from the API.</div>';
       document.getElementById("raw-json").textContent = JSON.stringify({{ error: error.message }}, null, 2);
     }});
 

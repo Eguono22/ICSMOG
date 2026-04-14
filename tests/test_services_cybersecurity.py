@@ -223,6 +223,42 @@ def test_service_records_operator_audit_history():
     assert history[0]["operator_name"] == "soc-lead"
 
 
+def test_service_builds_alert_investigation_context():
+    service = CybersecurityMonitoringService()
+    service.ingest_network_payload(
+        {
+            "events": [
+                {
+                    "source_ip": "203.0.113.140",
+                    "destination_ip": "10.0.0.41",
+                    "port": 22,
+                    "protocol": "SSH",
+                    "payload_size": 110,
+                },
+                {
+                    "source_ip": "203.0.113.140",
+                    "destination_ip": "10.0.0.88",
+                    "port": 8080,
+                    "protocol": "HTTP",
+                    "payload_size": 25000,
+                },
+            ]
+        }
+    )
+    alert_id = next(
+        alert["alert_id"]
+        for alert in service.get_alerts()
+        if alert["destination_ip"] == "10.0.0.41"
+    )
+
+    investigation = service.get_alert_investigation(alert_id)
+
+    assert investigation is not None
+    assert investigation["alert"]["alert_id"] == alert_id
+    assert investigation["activity_log"] == []
+    assert investigation["related_alerts"][0]["relationship"] == "source_ip"
+
+
 def test_service_bootstraps_and_creates_operator_accounts():
     with tempfile.TemporaryDirectory() as temp_dir:
         store = CybersecurityEventStore(f"{temp_dir}/cybersecurity.db")

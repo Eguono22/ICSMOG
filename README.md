@@ -168,6 +168,7 @@ Example endpoints:
 - `GET /cybersecurity/dashboard`
 - `GET /cybersecurity/alerts`
 - `GET /cybersecurity/alerts/<alert_id>`
+- `GET /cybersecurity/alerts/<alert_id>/investigation`
 - `GET /cybersecurity/import-history`
 - `GET /cybersecurity/audit-log`
 - `GET /cybersecurity/me`

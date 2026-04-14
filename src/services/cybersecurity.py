@@ -341,6 +341,21 @@ class CybersecurityMonitoringService:
                 return alert
         return None
 
+    def get_alert_investigation(
+        self,
+        alert_id: str,
+        activity_limit: int = 10,
+        related_limit: int = 5,
+    ) -> Optional[Dict[str, Any]]:
+        alert = self.get_alert_by_id(alert_id)
+        if alert is None:
+            return None
+        return {
+            "alert": alert,
+            "activity_log": self.get_audit_log(limit=activity_limit, target=alert_id),
+            "related_alerts": self._get_related_alerts(alert, limit=related_limit),
+        }
+
     def acknowledge_alert(
         self,
         alert_id: str,
@@ -403,10 +418,14 @@ class CybersecurityMonitoringService:
             return []
         return self.store.load_import_history(limit=limit)
 
-    def get_audit_log(self, limit: int = 20) -> List[Dict[str, Any]]:
+    def get_audit_log(
+        self,
+        limit: int = 20,
+        target: str | None = None,
+    ) -> List[Dict[str, Any]]:
         if self.store is None:
             return []
-        return self.store.load_audit_log(limit=limit)
+        return self.store.load_audit_log(limit=limit, target=target)
 
     def authenticate_operator(
         self,
@@ -615,6 +634,27 @@ class CybersecurityMonitoringService:
             self.store.mark_processed_import(file_key, file_path, import_type)
             return
         self._memory_processed_imports.add(file_key)
+
+    def _get_related_alerts(
+        self,
+        alert: Dict[str, Any],
+        limit: int,
+    ) -> List[Dict[str, Any]]:
+        related_alerts: List[Dict[str, Any]] = []
+        for candidate in self.get_alerts():
+            if candidate["alert_id"] == alert["alert_id"]:
+                continue
+            relationship: List[str] = []
+            if candidate["source_ip"] == alert["source_ip"]:
+                relationship.append("source_ip")
+            if candidate["destination_ip"] == alert["destination_ip"]:
+                relationship.append("destination_ip")
+            if not relationship:
+                continue
+            candidate_with_context = dict(candidate)
+            candidate_with_context["relationship"] = ", ".join(relationship)
+            related_alerts.append(candidate_with_context)
+        return related_alerts[:limit]
 
 
 def build_sample_network_events() -> List[NetworkEvent]:

@@ -292,23 +292,45 @@ class CybersecurityEventStore:
                 ),
             )
 
-    def load_audit_log(self, limit: int = 20) -> list[dict[str, str | dict]]:
+    def load_audit_log(
+        self,
+        limit: int = 20,
+        target: str | None = None,
+    ) -> list[dict[str, str | dict]]:
         with _open_connection(self.db_path) as connection:
-            rows = connection.execute(
-                """
-                SELECT
-                    operator_name,
-                    action_type,
-                    target,
-                    status,
-                    details,
-                    created_at
-                FROM audit_log
-                ORDER BY created_at DESC, id DESC
-                LIMIT ?
-                """,
-                (limit,),
-            ).fetchall()
+            if target is None:
+                rows = connection.execute(
+                    """
+                    SELECT
+                        operator_name,
+                        action_type,
+                        target,
+                        status,
+                        details,
+                        created_at
+                    FROM audit_log
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT
+                        operator_name,
+                        action_type,
+                        target,
+                        status,
+                        details,
+                        created_at
+                    FROM audit_log
+                    WHERE target = ?
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT ?
+                    """,
+                    (target, limit),
+                ).fetchall()
         return [
             {
                 "operator_name": row[0],
