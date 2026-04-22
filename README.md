@@ -28,6 +28,7 @@ What works well now:
 - local operator accounts with role-based access for protected workflows
 - persistent operator audit trails for imports and alert lifecycle changes
 - API and dashboard alert filtering by severity, status, IPs, protocol, port, and free-text search
+- dedicated authentication event ingestion with explainable auth-focused correlation rules
 - unit tests covering the existing domain modules
 
 What is not built yet:
@@ -155,7 +156,9 @@ Expected watch-folder layout:
 watch_inbox/
 |- network/
 |  `- *.csv
-`- security/
+|- security/
+|  `- *.csv
+`- auth/
    `- *.csv
 ```
 
@@ -181,8 +184,10 @@ Example endpoints:
 - `POST /cybersecurity/operators`
 - `POST /cybersecurity/import/network-csv`
 - `POST /cybersecurity/import/security-csv`
+- `POST /cybersecurity/import/auth-csv`
 - `POST /cybersecurity/network-events`
 - `POST /cybersecurity/security-events`
+- `POST /cybersecurity/auth-events`
 
 CSV imports accept either `csv_path` or `csv_text`. Example:
 
@@ -196,6 +201,13 @@ Sample files are available at:
 
 - `examples/network_events.csv`
 - `examples/security_events.csv`
+- `examples/auth_events.csv`
+
+Authentication event payloads accept fields such as `source`, `username`,
+`source_ip`, `auth_method`, `result`, optional `target_resource`,
+`is_privileged`, and `failure_reason`. ICSMOG currently includes explainable
+rules for repeated failures, disabled-account attempts, and privileged logins
+from public IP space.
 
 The watch-folder workflow records processed files in the SQLite database, so
 already-imported CSVs are skipped after restart unless the file contents change.
@@ -217,7 +229,7 @@ authentication still works for scripts and test automation.
 
 For recurring feeds, operators can also trigger
 `POST /cybersecurity/import/scan-directory` with a server-accessible
-`directory_path`, `target` (`network` or `security`), and optional filename
+`directory_path`, `target` (`network`, `security`, or `auth`), and optional filename
 `pattern` to import matching CSV files while skipping files that were already
 processed.
 

@@ -17,6 +17,8 @@ from src.cybersecurity import (
 )
 from src.cybersecurity.ids_ips import Alert, AlertStatus, NetworkEvent
 from src.cybersecurity.siem import (
+    AuthenticationEvent,
+    AuthenticationResult,
     EventCategory,
     EventSeverity,
     SecurityEvent,
@@ -75,11 +77,23 @@ class CybersecurityMonitoringService:
             "triggered_rules": self.get_triggered_rules(),
         }
 
+    def ingest_auth_events(
+        self,
+        events: Iterable[AuthenticationEvent],
+    ) -> Dict[str, Any]:
+        event_list = [event.to_security_event() for event in events]
+        result = self.ingest_security_events(event_list)
+        result["auth_events"] = len(event_list)
+        return result
+
     def ingest_network_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         return self.ingest_network_events(_parse_network_events(payload))
 
     def ingest_security_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         return self.ingest_security_events(_parse_security_events(payload))
+
+    def ingest_auth_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return self.ingest_auth_events(_parse_auth_events(payload))
 
     def import_network_csv(
         self,
@@ -171,6 +185,51 @@ class CybersecurityMonitoringService:
         result["operator_name"] = operator_name
         return result
 
+    def import_auth_csv(
+        self,
+        payload: Dict[str, Any],
+        operator_name: str = "system",
+    ) -> Dict[str, Any]:
+        operator_name = _normalize_operator_name(operator_name)
+        imported_from = _describe_csv_source(payload)
+        try:
+            events = _load_auth_events_from_csv_payload(payload)
+            result = self.ingest_auth_events(events)
+        except ValueError as exc:
+            if self.store is not None:
+                self.store.record_import_history(
+                    imported_from,
+                    "auth_csv",
+                    operator_name=operator_name,
+                    status="failed",
+                    error_message=str(exc),
+                )
+                self.store.record_audit_event(
+                    operator_name=operator_name,
+                    action_type="import_auth_csv",
+                    target=imported_from,
+                    status="failed",
+                    details={"error_message": str(exc)},
+                )
+            raise
+        if self.store is not None:
+            self.store.record_import_history(
+                imported_from,
+                "auth_csv",
+                operator_name=operator_name,
+                status="success",
+            )
+            self.store.record_audit_event(
+                operator_name=operator_name,
+                action_type="import_auth_csv",
+                target=imported_from,
+                status="success",
+                details={"ingested_events": result["ingested_events"]},
+            )
+        result["imported_from"] = imported_from
+        result["operator_name"] = operator_name
+        return result
+
     def scan_csv_directory(
         self,
         directory_path: str,
@@ -214,6 +273,11 @@ class CybersecurityMonitoringService:
 
                 if normalized_target == "network":
                     import_result = self.import_network_csv(
+                        {"csv_path": str(file_path)},
+                        operator_name=operator_name,
+                    )
+                elif normalized_target == "auth":
+                    import_result = self.import_auth_csv(
                         {"csv_path": str(file_path)},
                         operator_name=operator_name,
                     )
@@ -354,6 +418,11 @@ class CybersecurityMonitoringService:
             "alert": alert,
             "activity_log": self.get_audit_log(limit=activity_limit, target=alert_id),
             "related_alerts": self._get_related_alerts(alert, limit=related_limit),
+            "auth_activity": self._get_related_auth_activity(alert, limit=activity_limit),
+            "related_rule_activity": self._get_related_rule_activity(
+                alert,
+                limit=related_limit,
+            ),
         }
 
     def acknowledge_alert(
@@ -656,6 +725,45 @@ class CybersecurityMonitoringService:
             related_alerts.append(candidate_with_context)
         return related_alerts[:limit]
 
+    def _get_related_auth_activity(
+        self,
+        alert: Dict[str, Any],
+        limit: int,
+    ) -> List[Dict[str, Any]]:
+        matching_events: List[Dict[str, Any]] = []
+        for event in self.siem.get_events(category=EventCategory.AUTHENTICATION):
+            serialized = _serialize_security_event(event)
+            if serialized["source_ip"] != alert["source_ip"]:
+                continue
+            serialized["relationship"] = "source_ip"
+            matching_events.append(serialized)
+        matching_events.sort(key=lambda event: event["timestamp"], reverse=True)
+        return matching_events[:limit]
+
+    def _get_related_rule_activity(
+        self,
+        alert: Dict[str, Any],
+        limit: int,
+    ) -> List[Dict[str, Any]]:
+        related_rules: List[Dict[str, Any]] = []
+        for rule in reversed(self.get_triggered_rules()):
+            details = rule.get("details", {}) if isinstance(rule, dict) else {}
+            source_ips = [
+                str(source_ip).strip()
+                for source_ip in details.get("source_ips", [])
+            ]
+            relationship = None
+            if alert["source_ip"] in source_ips:
+                relationship = "source_ip"
+            elif alert["destination_ip"] in source_ips:
+                relationship = "destination_ip"
+            if relationship is None:
+                continue
+            rule_with_context = dict(rule)
+            rule_with_context["relationship"] = relationship
+            related_rules.append(rule_with_context)
+        return related_rules[:limit]
+
 
 def build_sample_network_events() -> List[NetworkEvent]:
     """Return the default network events used by the CLI demo."""
@@ -679,12 +787,21 @@ def build_sample_network_events() -> List[NetworkEvent]:
 
 def build_sample_security_events() -> List[SecurityEvent]:
     """Return the default SIEM events used by the CLI demo."""
+    return [event.to_security_event() for event in build_sample_auth_events()]
+
+
+def build_sample_auth_events() -> List[AuthenticationEvent]:
+    """Return realistic authentication events used by the CLI demo."""
     return [
-        SecurityEvent(
-            source="auth-service",
-            category=EventCategory.AUTHENTICATION,
-            severity=EventSeverity.ERROR,
-            message="Login failed",
+        AuthenticationEvent(
+            source="vpn-gateway",
+            username="admin",
+            source_ip="198.51.100.25",
+            auth_method="password",
+            result=AuthenticationResult.FAILURE,
+            target_resource="vpn-console",
+            is_privileged=True,
+            failure_reason="bad_password",
         )
         for _ in range(5)
     ]
@@ -717,6 +834,20 @@ def process_security_events(
     }
 
 
+def process_auth_events(
+    events: Iterable[AuthenticationEvent],
+    siem: Optional[SecurityInformationEventManagement] = None,
+) -> Dict[str, Any]:
+    """Analyze authentication events through the SIEM workflow."""
+    service = CybersecurityMonitoringService(siem=siem)
+    result = service.ingest_auth_events(events)
+    return {
+        "dashboard": result["dashboard"],
+        "triggered_rules": result["triggered_rules"],
+        "auth_events": result["auth_events"],
+    }
+
+
 def run_sample_cybersecurity_scenario(verbose: bool = True) -> Dict[str, Any]:
     """Run the default cybersecurity workflow used by the CLI demo."""
     if verbose:
@@ -727,7 +858,7 @@ def run_sample_cybersecurity_scenario(verbose: bool = True) -> Dict[str, Any]:
         print(f"  IPS alert: {ips_result['alert'] if ips_result['alert'] else 'None'}")
         print(f"  Auto-blocked IPs: {ips_result['auto_blocked_ips']}")
 
-    siem_result = process_security_events(build_sample_security_events())
+    siem_result = process_auth_events(build_sample_auth_events())
     if verbose:
         print(f"  SIEM dashboard: {siem_result['dashboard']}")
 
@@ -745,6 +876,11 @@ def _parse_network_events(payload: Dict[str, Any]) -> List[NetworkEvent]:
 def _parse_security_events(payload: Dict[str, Any]) -> List[SecurityEvent]:
     raw_events = _require_event_list(payload, "events")
     return [_parse_security_event(item) for item in raw_events]
+
+
+def _parse_auth_events(payload: Dict[str, Any]) -> List[AuthenticationEvent]:
+    raw_events = _require_event_list(payload, "events")
+    return [_parse_auth_event(item) for item in raw_events]
 
 
 def _require_event_list(payload: Dict[str, Any], key: str) -> List[Dict[str, Any]]:
@@ -813,6 +949,38 @@ def _parse_security_event(data: Dict[str, Any]) -> SecurityEvent:
     )
 
 
+def _parse_auth_event(data: Dict[str, Any]) -> AuthenticationEvent:
+    required = ["source", "username", "source_ip", "auth_method", "result"]
+    missing = [
+        field
+        for field in required
+        if field not in data or data[field] in {None, ""}
+    ]
+    if missing:
+        raise ValueError(
+            "Missing authentication event fields: " + ", ".join(sorted(missing))
+        )
+    raw_data = data.get("raw_data", {})
+    if raw_data and not isinstance(raw_data, dict):
+        raise ValueError("'raw_data' must be a JSON object")
+    return AuthenticationEvent(
+        source=str(data["source"]),
+        username=str(data["username"]),
+        source_ip=str(data["source_ip"]),
+        auth_method=str(data["auth_method"]),
+        result=_parse_enum(
+            data["result"],
+            AuthenticationResult,
+            "result",
+        ),
+        timestamp=_parse_optional_timestamp(data.get("timestamp")),
+        target_resource=_normalize_optional_filter(data.get("target_resource")),
+        is_privileged=bool(data.get("is_privileged", False)),
+        failure_reason=_normalize_optional_filter(data.get("failure_reason")),
+        raw_data=raw_data,
+    )
+
+
 def _parse_enum(value: Any, enum_type: Any, field_name: str) -> Any:
     try:
         return enum_type(str(value))
@@ -871,6 +1039,36 @@ def _load_security_events_from_csv_payload(payload: Dict[str, Any]) -> List[Secu
     return events
 
 
+def _load_auth_events_from_csv_payload(
+    payload: Dict[str, Any],
+) -> List[AuthenticationEvent]:
+    rows = _load_csv_rows(payload)
+    events: List[AuthenticationEvent] = []
+    for row in rows:
+        event_payload: Dict[str, Any] = {
+            "source": row.get("source"),
+            "username": row.get("username"),
+            "source_ip": row.get("source_ip"),
+            "auth_method": row.get("auth_method"),
+            "result": row.get("result"),
+        }
+        if row.get("timestamp"):
+            event_payload["timestamp"] = row["timestamp"]
+        if row.get("target_resource"):
+            event_payload["target_resource"] = row["target_resource"]
+        if row.get("is_privileged"):
+            event_payload["is_privileged"] = _parse_csv_bool(
+                row["is_privileged"],
+                "is_privileged",
+            )
+        if row.get("failure_reason"):
+            event_payload["failure_reason"] = row["failure_reason"]
+        if row.get("raw_data"):
+            event_payload["raw_data"] = _parse_json_cell(row["raw_data"], "raw_data")
+        events.append(_parse_auth_event(event_payload))
+    return events
+
+
 def _load_csv_rows(payload: Dict[str, Any]) -> List[Dict[str, str]]:
     csv_text = payload.get("csv_text")
     csv_path = payload.get("csv_path")
@@ -908,6 +1106,17 @@ def _parse_json_cell(value: str, field_name: str) -> Dict[str, Any]:
     if not isinstance(parsed, dict):
         raise ValueError(f"CSV column '{field_name}' must contain a JSON object")
     return parsed
+
+
+def _parse_csv_bool(value: str, field_name: str) -> bool:
+    normalized = str(value).strip().lower()
+    if normalized in {"true", "1", "yes"}:
+        return True
+    if normalized in {"false", "0", "no"}:
+        return False
+    raise ValueError(
+        f"CSV column '{field_name}' must be one of: true, false, 1, 0, yes, no"
+    )
 
 
 def _describe_csv_source(payload: Dict[str, Any]) -> str:
@@ -951,8 +1160,8 @@ def _normalize_operator_name(operator_name: str) -> str:
 
 def _normalize_import_target(target: str) -> str:
     normalized = str(target).strip().lower()
-    if normalized not in {"network", "security"}:
-        raise ValueError("target must be either 'network' or 'security'")
+    if normalized not in {"network", "security", "auth"}:
+        raise ValueError("target must be one of: network, security, auth")
     return normalized
 
 
@@ -1001,6 +1210,25 @@ def _serialize_alert(alert: Alert) -> Dict[str, Any]:
     }
     serialized["alert_id"] = _build_alert_id(serialized)
     return serialized
+
+
+def _serialize_security_event(event: SecurityEvent) -> Dict[str, Any]:
+    raw_data = event.raw_data if isinstance(event.raw_data, dict) else {}
+    return {
+        "source": event.source,
+        "category": event.category.value,
+        "severity": event.severity.value,
+        "message": event.message,
+        "timestamp": event.timestamp.isoformat(),
+        "username": raw_data.get("username"),
+        "source_ip": raw_data.get("source_ip"),
+        "auth_method": raw_data.get("auth_method"),
+        "result": raw_data.get("result"),
+        "target_resource": raw_data.get("target_resource"),
+        "is_privileged": bool(raw_data.get("is_privileged", False)),
+        "failure_reason": raw_data.get("failure_reason"),
+        "raw_data": raw_data,
+    }
 
 
 def _build_alert_id(serialized_alert: Dict[str, Any]) -> str:

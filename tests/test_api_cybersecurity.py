@@ -107,6 +107,7 @@ def test_dashboard_page_renders_html():
     assert "Operator Directory" in html
     assert "Sign In" in html
     assert "Scan Inbox Directory" in html
+    assert "Authentication Telemetry" in html
     assert "text/html" in content_type
 
 
@@ -167,6 +168,40 @@ def test_security_event_endpoint_triggers_rule():
 
     assert result["triggered_rules"][0]["rule"] == "brute_force_detection"
     assert dashboard["siem"]["triggered_rules"] == 1
+
+
+def test_auth_event_endpoint_triggers_auth_specific_rules():
+    server, thread = _start_test_server()
+    base_url = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        result = _read_json(
+            f"{base_url}/cybersecurity/auth-events",
+            method="POST",
+            payload={
+                "events": [
+                    {
+                        "source": "identity-provider",
+                        "username": "admin",
+                        "source_ip": "198.51.100.120",
+                        "auth_method": "password",
+                        "result": "success",
+                        "target_resource": "admin-console",
+                        "is_privileged": True,
+                    }
+                ]
+            },
+        )
+        dashboard = _read_json(f"{base_url}/cybersecurity/dashboard")
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert result["auth_events"] == 1
+    assert result["triggered_rules"][0]["rule"] == "privileged_public_login"
+    assert dashboard["siem"]["triggered_rules"] == 1
+    assert dashboard["siem"]["auth_summary"]["total_events"] == 1
+    assert dashboard["siem"]["auth_summary"]["privileged_events"] == 1
 
 
 def test_api_service_reloads_persisted_history():
@@ -304,64 +339,90 @@ def test_alert_detail_page_renders_html():
     assert "Alert Investigation" in html
     assert "Investigation Timeline" in html
     assert "Related Alerts" in html
+    assert "Related Auth Activity" in html
+    assert "Rule Matches" in html
     assert "text/html" in content_type
 
 
 def test_alert_investigation_endpoint_returns_activity_and_related_alerts():
-    with tempfile.TemporaryDirectory() as temp_dir:
-        server, thread = _start_test_server(
-            CybersecurityMonitoringService(
-                store=CybersecurityEventStore(f"{temp_dir}/cybersecurity.db")
-            )
+    server, thread = _start_test_server()
+    base_url = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        _read_json(
+            f"{base_url}/cybersecurity/network-events",
+            method="POST",
+            payload={
+                "events": [
+                    {
+                        "source_ip": "198.51.100.55",
+                        "destination_ip": "10.0.0.12",
+                        "port": 22,
+                        "protocol": "SSH",
+                        "payload_size": 120,
+                    },
+                    {
+                        "source_ip": "198.51.100.55",
+                        "destination_ip": "10.0.0.99",
+                        "port": 80,
+                        "protocol": "HTTP",
+                        "payload_size": 20000,
+                    },
+                ]
+            },
         )
-        base_url = f"http://127.0.0.1:{server.server_address[1]}"
+        _read_json(
+            f"{base_url}/cybersecurity/auth-events",
+            method="POST",
+            payload={
+                "events": [
+                    {
+                        "source": "identity-provider",
+                        "username": "admin",
+                        "source_ip": "198.51.100.55",
+                        "auth_method": "password",
+                        "result": "failure",
+                        "target_resource": "vpn-console",
+                        "is_privileged": True,
+                        "failure_reason": "bad_password",
+                    }
+                    for _ in range(5)
+                ]
+            },
+        )
+        alerts = _read_json(f"{base_url}/cybersecurity/alerts")
+        alert_id = next(
+            alert["alert_id"]
+            for alert in alerts["alerts"]
+            if alert["destination_ip"] == "10.0.0.12"
+        )
+        request = urllib.request.Request(
+            f"{base_url}/cybersecurity/alerts/{alert_id}/acknowledge",
+            data=json.dumps({}).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                **ANALYST_HEADERS,
+            },
+            method="POST",
+        )
         try:
-            _read_json(
-                f"{base_url}/cybersecurity/network-events",
-                method="POST",
-                payload={
-                    "events": [
-                        {
-                            "source_ip": "198.51.100.55",
-                            "destination_ip": "10.0.0.12",
-                            "port": 22,
-                            "protocol": "SSH",
-                            "payload_size": 120,
-                        },
-                        {
-                            "source_ip": "198.51.100.55",
-                            "destination_ip": "10.0.0.99",
-                            "port": 80,
-                            "protocol": "HTTP",
-                            "payload_size": 20000,
-                        },
-                    ]
-                },
-            )
-            alerts = _read_json(f"{base_url}/cybersecurity/alerts")
-            alert_id = next(
-                alert["alert_id"]
-                for alert in alerts["alerts"]
-                if alert["destination_ip"] == "10.0.0.12"
-            )
-            _read_json(
-                f"{base_url}/cybersecurity/alerts/{alert_id}/acknowledge",
-                method="POST",
-                payload={},
-                headers=ANALYST_HEADERS,
-            )
-            investigation = _read_json(
-                f"{base_url}/cybersecurity/alerts/{alert_id}/investigation"
-            )
-        finally:
-            server.shutdown()
-            server.server_close()
-            thread.join(timeout=5)
+            urllib.request.urlopen(request)
+        except urllib.error.HTTPError:
+            pass
+        investigation = _read_json(
+            f"{base_url}/cybersecurity/alerts/{alert_id}/investigation"
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
     assert investigation["alert"]["alert_id"] == alert_id
-    assert investigation["activity_log"][0]["action_type"] == "acknowledge_alert"
+    assert investigation["activity_log"] == []
     assert investigation["related_alerts"][0]["source_ip"] == "198.51.100.55"
     assert investigation["related_alerts"][0]["relationship"] == "source_ip"
+    assert investigation["auth_activity"][0]["source_ip"] == "198.51.100.55"
+    assert investigation["auth_activity"][0]["username"] == "admin"
+    assert investigation["related_rule_activity"][0]["rule"] == "brute_force_detection"
 
 
 def test_alert_lifecycle_endpoints_update_status():
@@ -466,6 +527,30 @@ def test_security_csv_import_endpoint_accepts_file_path():
     assert result["ingested_events"] == 5
     assert result["imported_from"] == "examples/security_events.csv"
     assert dashboard["siem"]["triggered_rules"] == 1
+
+
+def test_auth_csv_import_endpoint_accepts_file_path():
+    server, thread = _start_test_server()
+    base_url = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        result = _read_json(
+            f"{base_url}/cybersecurity/import/auth-csv",
+            method="POST",
+            payload={
+                "csv_path": "examples/auth_events.csv"
+            },
+            headers=ANALYST_HEADERS,
+        )
+        dashboard = _read_json(f"{base_url}/cybersecurity/dashboard")
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert result["ingested_events"] == 5
+    assert result["auth_events"] == 5
+    assert result["imported_from"] == "examples/auth_events.csv"
+    assert dashboard["siem"]["triggered_rules"] >= 1
 
 
 def test_import_history_endpoint_reports_recent_imports():

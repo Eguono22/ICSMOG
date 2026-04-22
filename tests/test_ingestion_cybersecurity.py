@@ -13,8 +13,10 @@ def test_scan_watch_directory_once_imports_new_network_and_security_files():
         watch_root = Path(temp_dir) / "watch"
         network_dir = watch_root / "network"
         security_dir = watch_root / "security"
+        auth_dir = watch_root / "auth"
         network_dir.mkdir(parents=True)
         security_dir.mkdir(parents=True)
+        auth_dir.mkdir(parents=True)
         (network_dir / "batch-1.csv").write_text(
             "source_ip,destination_ip,port,protocol,payload_size\n"
             "198.51.100.71,10.0.0.71,22,SSH,100\n",
@@ -29,6 +31,11 @@ def test_scan_watch_directory_once_imports_new_network_and_security_files():
             "auth-service,authentication,error,Login failed\n",
             encoding="utf-8",
         )
+        (auth_dir / "batch-1.csv").write_text(
+            "source,username,source_ip,auth_method,result,target_resource,is_privileged\n"
+            "identity-provider,admin,198.51.100.88,password,success,admin-console,true\n",
+            encoding="utf-8",
+        )
         service = CybersecurityMonitoringService(
             store=CybersecurityEventStore(f"{temp_dir}/cybersecurity.db")
         )
@@ -36,11 +43,12 @@ def test_scan_watch_directory_once_imports_new_network_and_security_files():
         summary = scan_watch_directory_once(service, str(watch_root))
         dashboard = service.get_dashboard()
 
-    assert summary["imported_files"] == 2
+    assert summary["imported_files"] == 3
     assert len(summary["network"]["processed_files"]) == 1
     assert len(summary["security"]["processed_files"]) == 1
+    assert len(summary["auth"]["processed_files"]) == 1
     assert dashboard["ips"]["total_events"] == 1
-    assert dashboard["siem"]["triggered_rules"] == 1
+    assert dashboard["siem"]["triggered_rules"] == 2
 
 
 def test_scan_watch_directory_once_skips_already_processed_files():
@@ -64,6 +72,7 @@ def test_scan_watch_directory_once_skips_already_processed_files():
     assert first_summary["imported_files"] == 1
     assert second_summary["imported_files"] == 0
     assert len(second_summary["network"]["skipped_files"]) == 1
+    assert len(second_summary["auth"]["skipped_files"]) == 0
 
 
 def test_scan_watch_directory_once_reports_failed_files_and_continues():
@@ -71,8 +80,10 @@ def test_scan_watch_directory_once_reports_failed_files_and_continues():
         watch_root = Path(temp_dir) / "watch"
         network_dir = watch_root / "network"
         security_dir = watch_root / "security"
+        auth_dir = watch_root / "auth"
         network_dir.mkdir(parents=True)
         security_dir.mkdir(parents=True)
+        auth_dir.mkdir(parents=True)
         (network_dir / "bad.csv").write_text(
             "source_ip,destination_ip,protocol,payload_size\n"
             "198.51.100.73,10.0.0.73,SSH,100\n",
@@ -87,6 +98,11 @@ def test_scan_watch_directory_once_reports_failed_files_and_continues():
             "auth-service,authentication,error,Login failed\n",
             encoding="utf-8",
         )
+        (auth_dir / "bad-auth.csv").write_text(
+            "source,username,source_ip,auth_method\n"
+            "identity-provider,alice,198.51.100.99,password\n",
+            encoding="utf-8",
+        )
         service = CybersecurityMonitoringService(
             store=CybersecurityEventStore(f"{temp_dir}/cybersecurity.db")
         )
@@ -97,5 +113,6 @@ def test_scan_watch_directory_once_reports_failed_files_and_continues():
     assert summary["imported_files"] == 1
     assert len(summary["network"]["failed_files"]) == 1
     assert len(summary["security"]["processed_files"]) == 1
+    assert len(summary["auth"]["failed_files"]) == 1
     assert history[0]["status"] in {"success", "failed"}
     assert any(entry["status"] == "failed" for entry in history)

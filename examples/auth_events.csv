@@ -1,0 +1,6 @@
+source,username,source_ip,auth_method,result,target_resource,is_privileged,failure_reason,timestamp
+identity-provider,admin,198.51.100.25,password,failure,admin-console,true,bad_password,2026-04-12T18:05:00+00:00
+identity-provider,admin,198.51.100.25,password,failure,admin-console,true,bad_password,2026-04-12T18:05:10+00:00
+identity-provider,admin,198.51.100.25,password,failure,admin-console,true,bad_password,2026-04-12T18:05:20+00:00
+identity-provider,admin,198.51.100.25,password,failure,admin-console,true,bad_password,2026-04-12T18:05:30+00:00
+identity-provider,admin,198.51.100.25,password,failure,admin-console,true,bad_password,2026-04-12T18:05:40+00:00

@@ -698,6 +698,10 @@ def render_dashboard_html() -> str:
           <div class="empty-state">No correlation rules have fired yet.</div>
         </div>
         <div class="footer-note" id="severity-summary">Severity profile will appear after events are ingested.</div>
+        <div class="footer-note">Authentication Telemetry</div>
+        <div class="stack" id="auth-summary-list">
+          <div class="empty-state">Authentication telemetry will appear after auth events are ingested.</div>
+        </div>
       </article>
     </section>
 
@@ -737,6 +741,7 @@ def render_dashboard_html() -> str:
               <select id="import-target">
                 <option value="network">Network</option>
                 <option value="security">Security</option>
+                <option value="auth">Auth</option>
               </select>
             </div>
             <div class="operator-field">
@@ -745,6 +750,7 @@ def render_dashboard_html() -> str:
                 <option value="blank">Blank</option>
                 <option value="network-sample">Network Sample</option>
                 <option value="security-sample">Security Sample</option>
+                <option value="auth-sample">Auth Sample</option>
               </select>
             </div>
           </div>
@@ -899,6 +905,13 @@ def render_dashboard_html() -> str:
         "auth-service,authentication,error,Login failed\\n" +
         "auth-service,authentication,error,Login failed\\n" +
         "auth-service,authentication,error,Login failed\\n",
+      "auth-sample":
+        "source,username,source_ip,auth_method,result,target_resource,is_privileged,failure_reason\\n" +
+        "identity-provider,admin,198.51.100.25,password,failure,admin-console,true,bad_password\\n" +
+        "identity-provider,admin,198.51.100.25,password,failure,admin-console,true,bad_password\\n" +
+        "identity-provider,admin,198.51.100.25,password,failure,admin-console,true,bad_password\\n" +
+        "identity-provider,admin,198.51.100.25,password,failure,admin-console,true,bad_password\\n" +
+        "identity-provider,admin,198.51.100.25,password,failure,admin-console,true,bad_password\\n",
     };
 
     async function fetchJson(path, options = {}) {
@@ -949,6 +962,7 @@ def render_dashboard_html() -> str:
       renderSignal();
       renderAlerts();
       renderRules();
+      renderAuthSummary();
       renderImportHistory();
       renderAuditLog();
       renderOperators();
@@ -1036,6 +1050,7 @@ def render_dashboard_html() -> str:
                 <span class="tag ${escapeHtml(rule.severity)}">${escapeHtml(rule.severity)}</span>
               </div>
               <div class="muted">${escapeHtml(rule.description)}</div>
+              ${formatRuleDetailLine(rule.details)}
               <div class="muted">Triggered ${formatTimestamp(rule.triggered_at)}</div>
             </article>
           `)
@@ -1044,6 +1059,34 @@ def render_dashboard_html() -> str:
 
       document.getElementById("severity-summary").textContent =
         `Severity mix: info ${severity.info || 0}, warning ${severity.warning || 0}, error ${severity.error || 0}, critical ${severity.critical || 0}.`;
+    }
+
+    function renderAuthSummary() {
+      const container = document.getElementById("auth-summary-list");
+      const authSummary = dashboardState.dashboard?.siem?.auth_summary || {};
+
+      if (!(authSummary.total_events > 0)) {
+        container.innerHTML = '<div class="empty-state">Authentication telemetry will appear after auth events are ingested.</div>';
+        return;
+      }
+
+      const resultBreakdown = authSummary.result_breakdown || {};
+      container.innerHTML = [
+        `
+          <article class="history-card">
+            <div class="alert-head">
+              <div class="alert-title">Auth Result Mix</div>
+              <span class="tag info">${escapeHtml(String(authSummary.total_events))} events</span>
+            </div>
+            <div class="muted">
+              Success ${resultBreakdown.success || 0}, failure ${resultBreakdown.failure || 0}, denied ${resultBreakdown.denied || 0}, privileged ${authSummary.privileged_events || 0}.
+            </div>
+          </article>
+        `,
+        renderSummaryCard("Top Usernames", authSummary.top_usernames, "No usernames captured yet."),
+        renderSummaryCard("Top Source IPs", authSummary.top_source_ips, "No auth source IPs captured yet."),
+        renderSummaryCard("Failure Reasons", authSummary.failure_reasons, "No failure reasons captured yet."),
+      ].join("");
     }
 
     function renderImportHistory() {
@@ -1132,6 +1175,48 @@ def render_dashboard_html() -> str:
       const node = document.getElementById("directory-status");
       node.textContent = message;
       node.className = tone ? `operator-status ${tone}` : "operator-status";
+    }
+
+    function renderSummaryCard(title, entries, emptyText) {
+      if (!entries || !entries.length) {
+        return `
+          <article class="history-card">
+            <div class="alert-title">${escapeHtml(title)}</div>
+            <div class="muted">${escapeHtml(emptyText)}</div>
+          </article>
+        `;
+      }
+      return `
+        <article class="history-card">
+          <div class="alert-title">${escapeHtml(title)}</div>
+          <div class="muted">${entries.map((entry) => `${escapeHtml(entry.label)} (${escapeHtml(String(entry.count))})`).join(" | ")}</div>
+        </article>
+      `;
+    }
+
+    function formatRuleDetailLine(details) {
+      const detailText = summarizeRuleDetails(details);
+      if (!detailText) {
+        return "";
+      }
+      return `<div class="muted">${escapeHtml(detailText)}</div>`;
+    }
+
+    function summarizeRuleDetails(details) {
+      if (!details || typeof details !== "object") {
+        return "";
+      }
+      const segments = [];
+      if (typeof details.failed_attempts === "number") {
+        segments.push(`${details.failed_attempts} failed auth attempts`);
+      }
+      if (Array.isArray(details.usernames) && details.usernames.length) {
+        segments.push(`users ${details.usernames.join(", ")}`);
+      }
+      if (Array.isArray(details.source_ips) && details.source_ips.length) {
+        segments.push(`source IPs ${details.source_ips.join(", ")}`);
+      }
+      return segments.join(" | ");
     }
 
     function loadOperatorCredentials() {
@@ -1255,14 +1340,18 @@ def render_dashboard_html() -> str:
 
     async function injectSiemDemo() {
       setStatus("Injecting");
-      await fetchJson("/cybersecurity/security-events", {
+      await fetchJson("/cybersecurity/auth-events", {
         method: "POST",
         body: JSON.stringify({
           events: Array.from({ length: 5 }, () => ({
-            source: "auth-service",
-            category: "authentication",
-            severity: "error",
-            message: "Login failed",
+            source: "identity-provider",
+            username: "admin",
+            source_ip: "198.51.100.25",
+            auth_method: "password",
+            result: "failure",
+            target_resource: "admin-console",
+            is_privileged: true,
+            failure_reason: "bad_password",
           })),
         }),
       });
@@ -1277,6 +1366,8 @@ def render_dashboard_html() -> str:
         document.getElementById("import-target").value = "network";
       } else if (template === "security-sample") {
         document.getElementById("import-target").value = "security";
+      } else if (template === "auth-sample") {
+        document.getElementById("import-target").value = "auth";
       }
 
       setOperatorStatus(
@@ -1777,6 +1868,18 @@ def render_alert_detail_html(alert_id: str) -> str:
       </div>
     </section>
     <section class="panel">
+      <h2>Related Auth Activity</h2>
+      <div class="stack" id="auth-activity">
+        <div class="empty">Looking for matching authentication events...</div>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>Rule Matches</h2>
+      <div class="stack" id="rule-matches">
+        <div class="empty">Looking for matching correlation rules...</div>
+      </div>
+    </section>
+    <section class="panel">
       <h2>Raw Record</h2>
       <pre id="raw-json">Loading...</pre>
     </section>
@@ -1843,6 +1946,8 @@ def render_alert_detail_html(alert_id: str) -> str:
         document.getElementById("detail-grid").innerHTML = '<div class="empty">Try returning to the dashboard and selecting a different alert.</div>';
         document.getElementById("activity-log").innerHTML = '<div class="empty">No activity is available for this alert.</div>';
         document.getElementById("related-alerts").innerHTML = '<div class="empty">No related alerts are available.</div>';
+        document.getElementById("auth-activity").innerHTML = '<div class="empty">No related authentication activity is available.</div>';
+        document.getElementById("rule-matches").innerHTML = '<div class="empty">No related rule matches are available.</div>';
         document.getElementById("raw-json").textContent = '{{"error": "Alert not found"}}';
         return;
       }}
@@ -1853,9 +1958,11 @@ def render_alert_detail_html(alert_id: str) -> str:
 
     function renderInvestigation(payload) {{
       const alert = payload.alert;
+      const authActivity = payload.auth_activity || [];
+      const ruleMatches = payload.related_rule_activity || [];
       document.getElementById("alert-title").textContent = alert.description;
       document.getElementById("alert-copy").textContent =
-        `Alert ${{alert.alert_id}} was raised for ${{alert.source_ip}} targeting ${{alert.destination_ip}} on port ${{alert.port}}, with investigation context loaded from persisted history.`;
+        `Alert ${{alert.alert_id}} was raised for ${{alert.source_ip}} targeting ${{alert.destination_ip}} on port ${{alert.port}}. This investigation also found ${{authActivity.length}} matching auth event${{authActivity.length === 1 ? "" : "s"}} and ${{ruleMatches.length}} related rule match${{ruleMatches.length === 1 ? "" : "es"}}.`;
       document.getElementById("action-status").textContent =
         `Current status: ${{alert.status}}.`;
       document.getElementById("acknowledge-button").disabled = alert.status === "resolved";
@@ -1871,6 +1978,8 @@ def render_alert_detail_html(alert_id: str) -> str:
         ['Payload Size', `${{alert.payload_size}} bytes`],
         ['Created At', formatTimestamp(alert.created_at)],
         ['Resolved At', alert.resolved_at ? formatTimestamp(alert.resolved_at) : 'Not resolved'],
+        ['Auth Events Nearby', String(authActivity.length)],
+        ['Related Rules', String(ruleMatches.length)],
       ].map(([label, value]) => `
         <article class="datum">
           <div class="label">${{escapeHtml(label)}}</div>
@@ -1879,6 +1988,8 @@ def render_alert_detail_html(alert_id: str) -> str:
       `).join('');
       renderActivityLog(payload.activity_log || []);
       renderRelatedAlerts(payload.related_alerts || []);
+      renderAuthActivity(authActivity);
+      renderRuleMatches(ruleMatches);
       document.getElementById("raw-json").textContent = JSON.stringify(payload, null, 2);
     }}
 
@@ -1925,6 +2036,47 @@ def render_alert_detail_html(alert_id: str) -> str:
       `).join("");
     }}
 
+    function renderAuthActivity(entries) {{
+      const node = document.getElementById("auth-activity");
+      if (!entries.length) {{
+        node.innerHTML = '<div class="empty">No authentication events currently share this alert source IP.</div>';
+        return;
+      }}
+      node.innerHTML = entries.map((entry) => `
+        <article class="timeline-card">
+          <div class="card-title">${{escapeHtml(entry.username || "unknown user")}} via ${{escapeHtml(entry.auth_method || "unknown method")}}</div>
+          <div class="card-meta">
+            Result ${{escapeHtml(entry.result || "unknown")}} from ${{escapeHtml(entry.source_ip || "unknown IP")}} targeting ${{escapeHtml(entry.target_resource || "unspecified resource")}}.
+          </div>
+          <div class="chip-row">
+            <span class="chip">${{escapeHtml(formatTimestamp(entry.timestamp))}}</span>
+            <span class="chip">${{escapeHtml(entry.relationship.replaceAll("_", " "))}}</span>
+            <span class="chip">${{escapeHtml(entry.failure_reason || (entry.is_privileged ? "privileged account" : "no failure reason"))}}</span>
+          </div>
+        </article>
+      `).join("");
+    }}
+
+    function renderRuleMatches(rules) {{
+      const node = document.getElementById("rule-matches");
+      if (!rules.length) {{
+        node.innerHTML = '<div class="empty">No correlation rules currently reference this alert source or destination.</div>';
+        return;
+      }}
+      node.innerHTML = rules.map((rule) => `
+        <article class="mini-card">
+          <div class="card-title">${{escapeHtml(rule.rule)}}</div>
+          <div class="card-meta">${{escapeHtml(rule.description)}}</div>
+          <div class="chip-row">
+            <span class="chip">${{escapeHtml(rule.relationship.replaceAll("_", " "))}}</span>
+            <span class="chip">${{escapeHtml(rule.severity)}}</span>
+            <span class="chip">${{escapeHtml(formatTimestamp(rule.triggered_at))}}</span>
+          </div>
+          ${{rule.details ? `<div class="card-meta">${{escapeHtml(summarizeRuleDetails(rule.details) || "No rule detail context available.")}}</div>` : ""}}
+        </article>
+      `).join("");
+    }}
+
     async function applyAction(action) {{
       const response = await fetch(`/cybersecurity/alerts/${{encodeURIComponent(alertId)}}/${{action}}`, {{
         method: "POST",
@@ -1947,6 +2099,23 @@ def render_alert_detail_html(alert_id: str) -> str:
       return date.toLocaleString();
     }}
 
+    function summarizeRuleDetails(details) {{
+      if (!details || typeof details !== "object") {{
+        return "";
+      }}
+      const segments = [];
+      if (typeof details.failed_attempts === "number") {{
+        segments.push(`${{details.failed_attempts}} failed auth attempts`);
+      }}
+      if (Array.isArray(details.usernames) && details.usernames.length) {{
+        segments.push(`users ${{details.usernames.join(", ")}}`);
+      }}
+      if (Array.isArray(details.source_ips) && details.source_ips.length) {{
+        segments.push(`source IPs ${{details.source_ips.join(", ")}}`);
+      }}
+      return segments.join(" | ");
+    }}
+
     function escapeHtml(value) {{
       return String(value)
         .replaceAll("&", "&amp;")
@@ -1962,6 +2131,8 @@ def render_alert_detail_html(alert_id: str) -> str:
       document.getElementById("detail-grid").innerHTML = '<div class="empty">The alert details could not be loaded from the API.</div>';
       document.getElementById("activity-log").innerHTML = '<div class="empty">The investigation timeline could not be loaded from the API.</div>';
       document.getElementById("related-alerts").innerHTML = '<div class="empty">Related alert context could not be loaded from the API.</div>';
+      document.getElementById("auth-activity").innerHTML = '<div class="empty">Related auth activity could not be loaded from the API.</div>';
+      document.getElementById("rule-matches").innerHTML = '<div class="empty">Related rule matches could not be loaded from the API.</div>';
       document.getElementById("raw-json").textContent = JSON.stringify({{ error: error.message }}, null, 2);
     }});
 

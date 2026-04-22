@@ -18,8 +18,10 @@ def scan_watch_directory_once(
     root = Path(watch_dir)
     network_dir = root / "network"
     security_dir = root / "security"
+    auth_dir = root / "auth"
     network_dir.mkdir(parents=True, exist_ok=True)
     security_dir.mkdir(parents=True, exist_ok=True)
+    auth_dir.mkdir(parents=True, exist_ok=True)
 
     imported_network_files = _import_pending_files(
         service=service,
@@ -33,14 +35,22 @@ def scan_watch_directory_once(
         import_type="security_csv",
         importer=service.import_security_csv,
     )
+    imported_auth_files = _import_pending_files(
+        service=service,
+        directory=auth_dir,
+        import_type="auth_csv",
+        importer=service.import_auth_csv,
+    )
 
     return {
         "watch_dir": str(root),
         "network": imported_network_files,
         "security": imported_security_files,
+        "auth": imported_auth_files,
         "imported_files": (
             len(imported_network_files["processed_files"])
             + len(imported_security_files["processed_files"])
+            + len(imported_auth_files["processed_files"])
         ),
     }
 
@@ -55,7 +65,7 @@ def run_watch_directory_loop(
         raise ValueError("poll_interval_seconds must be greater than 0")
 
     print(f"Watching CSV inbox at {watch_dir}")
-    print("Expected folders: network/ and security/")
+    print("Expected folders: network/, security/, and auth/")
     print(f"Polling every {poll_interval_seconds} second(s). Press Ctrl+C to stop.")
 
     try:
@@ -66,13 +76,19 @@ def run_watch_directory_loop(
                     "Imported "
                     f"{summary['imported_files']} file(s): "
                     f"{summary['network']['processed_files']} network, "
-                    f"{summary['security']['processed_files']} security"
+                    f"{summary['security']['processed_files']} security, "
+                    f"{summary['auth']['processed_files']} auth"
                 )
-            if summary["network"]["failed_files"] or summary["security"]["failed_files"]:
+            if (
+                summary["network"]["failed_files"]
+                or summary["security"]["failed_files"]
+                or summary["auth"]["failed_files"]
+            ):
                 print(
                     "Import failures detected: "
                     f"{summary['network']['failed_files']} network, "
-                    f"{summary['security']['failed_files']} security"
+                    f"{summary['security']['failed_files']} security, "
+                    f"{summary['auth']['failed_files']} auth"
                 )
             time.sleep(poll_interval_seconds)
     except KeyboardInterrupt:
