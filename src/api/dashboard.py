@@ -486,6 +486,8 @@ def render_dashboard_html() -> str:
       background: rgba(47, 125, 96, 0.16);
     }
 
+    .tag.failure,
+    .tag.denied,
     .tag.failed {
       color: #fff4f0;
       background: var(--critical);
@@ -709,6 +711,67 @@ def render_dashboard_html() -> str:
       <article class="panel">
         <div class="panel-topline">
           <div>
+            <h2>Auth History</h2>
+            <p class="panel-copy">Search persisted authentication events by user, outcome, method, and privilege level.</p>
+          </div>
+        </div>
+        <div class="filter-row">
+          <div class="filter-field">
+            <label for="auth-filter-username">Username</label>
+            <input id="auth-filter-username" type="text" placeholder="admin">
+          </div>
+          <div class="filter-field">
+            <label for="auth-filter-result">Result</label>
+            <select id="auth-filter-result">
+              <option value="">All results</option>
+              <option value="success">Success</option>
+              <option value="failure">Failure</option>
+              <option value="denied">Denied</option>
+            </select>
+          </div>
+          <div class="filter-field">
+            <label for="auth-filter-method">Auth Method</label>
+            <input id="auth-filter-method" type="text" placeholder="password">
+          </div>
+          <div class="filter-field">
+            <label for="auth-filter-reason">Failure Reason</label>
+            <input id="auth-filter-reason" type="text" placeholder="bad_password">
+          </div>
+          <div class="filter-field">
+            <label for="auth-filter-query">Search</label>
+            <input id="auth-filter-query" type="text" placeholder="source IP, resource, or reason">
+          </div>
+          <div class="filter-field">
+            <label for="auth-filter-privileged">Only Privileged</label>
+            <select id="auth-filter-privileged">
+              <option value="">All accounts</option>
+              <option value="true">Privileged only</option>
+              <option value="false">Non-privileged only</option>
+            </select>
+          </div>
+        </div>
+        <div class="stack" id="auth-history-list">
+          <div class="empty-state">No authentication events matched the current filters.</div>
+        </div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-topline">
+          <div>
+            <h2>Import History</h2>
+            <p class="panel-copy">Recent watch-folder and CSV import activity recorded in persistent storage.</p>
+          </div>
+        </div>
+        <div class="stack" id="import-history-list">
+          <div class="empty-state">No CSV imports have been recorded yet.</div>
+        </div>
+      </article>
+    </section>
+
+    <section class="history-grid single-panel fade-up">
+      <article class="panel">
+        <div class="panel-topline">
+          <div>
             <h2>Operator Controls</h2>
             <p class="panel-copy">Paste inline CSV, choose the target pipeline, and trigger imports without leaving the console.</p>
           </div>
@@ -791,18 +854,6 @@ def render_dashboard_html() -> str:
           <div class="operator-status" id="operator-status">Set operator credentials, then run an inline CSV import.</div>
         </div>
       </article>
-
-      <article class="panel">
-        <div class="panel-topline">
-          <div>
-            <h2>Import History</h2>
-            <p class="panel-copy">Recent watch-folder and CSV import activity recorded in persistent storage.</p>
-          </div>
-        </div>
-        <div class="stack" id="import-history-list">
-          <div class="empty-state">No CSV imports have been recorded yet.</div>
-        </div>
-      </article>
     </section>
 
     <section class="history-grid single-panel fade-up">
@@ -877,6 +928,7 @@ def render_dashboard_html() -> str:
     const dashboardState = {
       dashboard: null,
       alerts: [],
+      authEvents: [],
       triggeredRules: [],
       imports: [],
       auditLog: [],
@@ -889,6 +941,14 @@ def render_dashboard_html() -> str:
         destinationIp: "",
         protocol: "",
         query: "",
+      },
+      authFilters: {
+        username: "",
+        result: "",
+        authMethod: "",
+        failureReason: "",
+        query: "",
+        isPrivileged: "",
       },
     };
 
@@ -935,15 +995,17 @@ def render_dashboard_html() -> str:
 
     async function refreshDashboard() {
       try {
-        const [dashboard, alertPayload, importPayload, auditPayload] = await Promise.all([
+        const [dashboard, alertPayload, authPayload, importPayload, auditPayload] = await Promise.all([
           fetchJson("/cybersecurity/dashboard"),
           fetchJson(buildAlertEndpoint()),
+          fetchJson(buildAuthEndpoint()),
           fetchJson("/cybersecurity/import-history?limit=8"),
           fetchJson("/cybersecurity/audit-log?limit=8"),
         ]);
 
         dashboardState.dashboard = dashboard;
         dashboardState.alerts = alertPayload.alerts || [];
+        dashboardState.authEvents = authPayload.auth_events || [];
         dashboardState.triggeredRules = alertPayload.triggered_rules || [];
         dashboardState.imports = importPayload.imports || [];
         dashboardState.auditLog = auditPayload.audit_log || [];
@@ -963,6 +1025,7 @@ def render_dashboard_html() -> str:
       renderAlerts();
       renderRules();
       renderAuthSummary();
+      renderAuthHistory();
       renderImportHistory();
       renderAuditLog();
       renderOperators();
@@ -1087,6 +1150,34 @@ def render_dashboard_html() -> str:
         renderSummaryCard("Top Source IPs", authSummary.top_source_ips, "No auth source IPs captured yet."),
         renderSummaryCard("Failure Reasons", authSummary.failure_reasons, "No failure reasons captured yet."),
       ].join("");
+    }
+
+    function renderAuthHistory() {
+      const container = document.getElementById("auth-history-list");
+      if (!dashboardState.authEvents.length) {
+        container.innerHTML = '<div class="empty-state">No authentication events matched the current filters.</div>';
+        return;
+      }
+
+      container.innerHTML = dashboardState.authEvents
+        .map((event) => `
+          <article class="history-card">
+            <div class="alert-head">
+              <div class="alert-title">${escapeHtml(event.username || "unknown user")}</div>
+              <span class="tag ${escapeHtml(event.result || "info")}">${escapeHtml(event.result || "unknown")}</span>
+            </div>
+            <div class="muted">
+              ${escapeHtml(event.source_ip || "unknown IP")} -> ${escapeHtml(event.target_resource || "unspecified resource")}
+            </div>
+            <div class="muted">
+              Method ${escapeHtml(event.auth_method || "unknown")} | Source ${escapeHtml(event.source || "unknown")} | ${event.is_privileged ? "Privileged account" : "Standard account"}
+            </div>
+            <div class="muted">
+              ${escapeHtml(event.failure_reason || "No failure reason recorded")} | ${formatTimestamp(event.timestamp)}
+            </div>
+          </article>
+        `)
+        .join("");
     }
 
     function renderImportHistory() {
@@ -1319,6 +1410,31 @@ def render_dashboard_html() -> str:
       return query ? `/cybersecurity/alerts?${query}` : "/cybersecurity/alerts";
     }
 
+    function buildAuthEndpoint() {
+      const params = new URLSearchParams();
+      if (dashboardState.authFilters.username) {
+        params.set("username", dashboardState.authFilters.username);
+      }
+      if (dashboardState.authFilters.result) {
+        params.set("result", dashboardState.authFilters.result);
+      }
+      if (dashboardState.authFilters.authMethod) {
+        params.set("auth_method", dashboardState.authFilters.authMethod);
+      }
+      if (dashboardState.authFilters.failureReason) {
+        params.set("failure_reason", dashboardState.authFilters.failureReason);
+      }
+      if (dashboardState.authFilters.query) {
+        params.set("query", dashboardState.authFilters.query);
+      }
+      if (dashboardState.authFilters.isPrivileged) {
+        params.set("is_privileged", dashboardState.authFilters.isPrivileged);
+      }
+      params.set("limit", "8");
+      const query = params.toString();
+      return query ? `/cybersecurity/auth-events?${query}` : "/cybersecurity/auth-events?limit=8";
+    }
+
     async function injectNetworkDemo() {
       setStatus("Injecting");
       await fetchJson("/cybersecurity/network-events", {
@@ -1510,6 +1626,36 @@ def render_dashboard_html() -> str:
 
     document.getElementById("filter-query").addEventListener("input", (event) => {
       dashboardState.filters.query = event.target.value.trim();
+      refreshDashboard();
+    });
+
+    document.getElementById("auth-filter-username").addEventListener("input", (event) => {
+      dashboardState.authFilters.username = event.target.value.trim();
+      refreshDashboard();
+    });
+
+    document.getElementById("auth-filter-result").addEventListener("change", (event) => {
+      dashboardState.authFilters.result = event.target.value;
+      refreshDashboard();
+    });
+
+    document.getElementById("auth-filter-method").addEventListener("input", (event) => {
+      dashboardState.authFilters.authMethod = event.target.value.trim();
+      refreshDashboard();
+    });
+
+    document.getElementById("auth-filter-reason").addEventListener("input", (event) => {
+      dashboardState.authFilters.failureReason = event.target.value.trim();
+      refreshDashboard();
+    });
+
+    document.getElementById("auth-filter-query").addEventListener("input", (event) => {
+      dashboardState.authFilters.query = event.target.value.trim();
+      refreshDashboard();
+    });
+
+    document.getElementById("auth-filter-privileged").addEventListener("change", (event) => {
+      dashboardState.authFilters.isPrivileged = event.target.value;
       refreshDashboard();
     });
 

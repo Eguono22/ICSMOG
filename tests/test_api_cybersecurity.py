@@ -108,6 +108,9 @@ def test_dashboard_page_renders_html():
     assert "Sign In" in html
     assert "Scan Inbox Directory" in html
     assert "Authentication Telemetry" in html
+    assert "Auth History" in html
+    assert "Only Privileged" in html
+    assert "/cybersecurity/auth-events" in html
     assert "text/html" in content_type
 
 
