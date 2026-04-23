@@ -11,7 +11,13 @@ from pathlib import Path
 from typing import List
 
 from src.cybersecurity.ids_ips import NetworkEvent
-from src.cybersecurity.siem import EventCategory, EventSeverity, SecurityEvent
+from src.cybersecurity.siem import (
+    AuthenticationEvent,
+    AuthenticationResult,
+    EventCategory,
+    EventSeverity,
+    SecurityEvent,
+)
 
 
 class CybersecurityEventStore:
@@ -81,6 +87,42 @@ class CybersecurityEventStore:
                 ],
             )
 
+    def save_auth_events(self, events: List[AuthenticationEvent]) -> None:
+        if not events:
+            return
+        with _open_connection(self.db_path) as connection:
+            connection.executemany(
+                """
+                INSERT INTO auth_events (
+                    source,
+                    username,
+                    source_ip,
+                    auth_method,
+                    result,
+                    target_resource,
+                    is_privileged,
+                    failure_reason,
+                    timestamp,
+                    raw_data
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        event.source,
+                        event.username,
+                        event.source_ip,
+                        event.auth_method,
+                        event.result.value,
+                        event.target_resource,
+                        1 if event.is_privileged else 0,
+                        event.failure_reason,
+                        event.timestamp.isoformat(),
+                        json.dumps(event.raw_data),
+                    )
+                    for event in events
+                ],
+            )
+
     def load_network_events(self) -> List[NetworkEvent]:
         with _open_connection(self.db_path) as connection:
             rows = connection.execute(
@@ -136,6 +178,68 @@ class CybersecurityEventStore:
             )
             for row in rows
         ]
+
+    def load_auth_events(
+        self,
+        username: str | None = None,
+        source_ip: str | None = None,
+        auth_method: str | None = None,
+        result: str | None = None,
+        target_resource: str | None = None,
+        failure_reason: str | None = None,
+        is_privileged: bool | None = None,
+        query: str | None = None,
+        limit: int = 20,
+    ) -> List[AuthenticationEvent]:
+        with _open_connection(self.db_path) as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    source,
+                    username,
+                    source_ip,
+                    auth_method,
+                    result,
+                    target_resource,
+                    is_privileged,
+                    failure_reason,
+                    timestamp,
+                    raw_data
+                FROM auth_events
+                ORDER BY timestamp DESC, id DESC
+                """
+            ).fetchall()
+        events = [
+            AuthenticationEvent(
+                source=row[0],
+                username=row[1],
+                source_ip=row[2],
+                auth_method=row[3],
+                result=AuthenticationResult(row[4]),
+                target_resource=row[5],
+                is_privileged=bool(row[6]),
+                failure_reason=row[7],
+                timestamp=_parse_timestamp(row[8]),
+                raw_data=json.loads(row[9]) if row[9] else {},
+            )
+            for row in rows
+        ]
+        filtered = [
+            event
+            for event in events
+            if _matches_auth_filter(
+                event,
+                username=username,
+                source_ip=source_ip,
+                auth_method=auth_method,
+                result=result,
+                target_resource=target_resource,
+                failure_reason=failure_reason,
+                is_privileged=is_privileged,
+                query=query,
+            )
+        ]
+        return filtered[:limit]
 
     def upsert_alert_state(
         self,
@@ -476,6 +580,23 @@ class CybersecurityEventStore:
             )
             connection.execute(
                 """
+                CREATE TABLE IF NOT EXISTS auth_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source TEXT NOT NULL,
+                    username TEXT NOT NULL,
+                    source_ip TEXT NOT NULL,
+                    auth_method TEXT NOT NULL,
+                    result TEXT NOT NULL,
+                    target_resource TEXT,
+                    is_privileged INTEGER NOT NULL DEFAULT 0,
+                    failure_reason TEXT,
+                    timestamp TEXT NOT NULL,
+                    raw_data TEXT NOT NULL DEFAULT '{}'
+                )
+                """
+            )
+            connection.execute(
+                """
                 CREATE TABLE IF NOT EXISTS alert_states (
                     alert_id TEXT PRIMARY KEY,
                     status TEXT NOT NULL,
@@ -585,6 +706,48 @@ def _parse_timestamp(value: str) -> datetime.datetime:
 
 def _hash_api_key(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _matches_auth_filter(
+    event: AuthenticationEvent,
+    username: str | None = None,
+    source_ip: str | None = None,
+    auth_method: str | None = None,
+    result: str | None = None,
+    target_resource: str | None = None,
+    failure_reason: str | None = None,
+    is_privileged: bool | None = None,
+    query: str | None = None,
+) -> bool:
+    if username is not None and event.username.lower() != username.lower():
+        return False
+    if source_ip is not None and event.source_ip.lower() != source_ip.lower():
+        return False
+    if auth_method is not None and event.auth_method.lower() != auth_method.lower():
+        return False
+    if result is not None and event.result.value.lower() != result.lower():
+        return False
+    target_value = event.target_resource or ""
+    if target_resource is not None and target_value.lower() != target_resource.lower():
+        return False
+    failure_value = event.failure_reason or ""
+    if failure_reason is not None and failure_value.lower() != failure_reason.lower():
+        return False
+    if is_privileged is not None and event.is_privileged is not is_privileged:
+        return False
+    if query is None:
+        return True
+    searchable_fields = [
+        event.source,
+        event.username,
+        event.source_ip,
+        event.auth_method,
+        event.result.value,
+        target_value,
+        failure_value,
+    ]
+    normalized_query = query.lower()
+    return any(normalized_query in str(field).lower() for field in searchable_fields)
 
 
 @contextmanager

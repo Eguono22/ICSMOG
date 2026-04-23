@@ -204,6 +204,49 @@ def test_auth_event_endpoint_triggers_auth_specific_rules():
     assert dashboard["siem"]["auth_summary"]["privileged_events"] == 1
 
 
+def test_auth_events_endpoint_supports_filtering():
+    server, thread = _start_test_server()
+    base_url = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        _read_json(
+            f"{base_url}/cybersecurity/auth-events",
+            method="POST",
+            payload={
+                "events": [
+                    {
+                        "source": "identity-provider",
+                        "username": "alice",
+                        "source_ip": "198.51.100.101",
+                        "auth_method": "password",
+                        "result": "denied",
+                        "target_resource": "admin-console",
+                        "is_privileged": True,
+                        "failure_reason": "disabled_account",
+                    },
+                    {
+                        "source": "identity-provider",
+                        "username": "bob",
+                        "source_ip": "198.51.100.102",
+                        "auth_method": "sso",
+                        "result": "success",
+                        "target_resource": "vpn-console",
+                    },
+                ]
+            },
+        )
+        filtered = _read_json(
+            f"{base_url}/cybersecurity/auth-events?username=alice&result=denied&is_privileged=true&query=disabled"
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert len(filtered["auth_events"]) == 1
+    assert filtered["auth_events"][0]["username"] == "alice"
+    assert filtered["auth_events"][0]["failure_reason"] == "disabled_account"
+
+
 def test_api_service_reloads_persisted_history():
     with tempfile.TemporaryDirectory() as temp_dir:
         store = CybersecurityEventStore(f"{temp_dir}/cybersecurity.db")

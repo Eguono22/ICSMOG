@@ -170,6 +170,7 @@ Example endpoints:
 - `GET /health`
 - `GET /cybersecurity/dashboard`
 - `GET /cybersecurity/alerts`
+- `GET /cybersecurity/auth-events`
 - `GET /cybersecurity/alerts/<alert_id>`
 - `GET /cybersecurity/alerts/<alert_id>/investigation`
 - `GET /cybersecurity/import-history`
@@ -208,6 +209,9 @@ Authentication event payloads accept fields such as `source`, `username`,
 `is_privileged`, and `failure_reason`. ICSMOG currently includes explainable
 rules for repeated failures, disabled-account attempts, and privileged logins
 from public IP space.
+Stored auth history can be queried through `GET /cybersecurity/auth-events`
+using filters like `username`, `source_ip`, `auth_method`, `result`,
+`target_resource`, `failure_reason`, `is_privileged`, `query`, and `limit`.
 
 The watch-folder workflow records processed files in the SQLite database, so
 already-imported CSVs are skipped after restart unless the file contents change.

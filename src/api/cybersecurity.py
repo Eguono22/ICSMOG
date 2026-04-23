@@ -31,7 +31,7 @@ def run_cybersecurity_api_server(
     print(f"ICSMOG cybersecurity API listening on http://{host}:{port}")
     print(f"Using SQLite storage at {storage_path}")
     print("Available endpoints: GET /, GET /dashboard, GET /health, GET /cybersecurity/dashboard, "
-      "GET /cybersecurity/alerts, GET /cybersecurity/alerts/<id>/investigation, GET /cybersecurity/import-history, GET /cybersecurity/audit-log, GET /cybersecurity/me, "
+      "GET /cybersecurity/alerts, GET /cybersecurity/auth-events, GET /cybersecurity/alerts/<id>/investigation, GET /cybersecurity/import-history, GET /cybersecurity/audit-log, GET /cybersecurity/me, "
       "GET /cybersecurity/operators, POST /cybersecurity/login, POST /cybersecurity/logout, "
       "POST /cybersecurity/operators, POST /cybersecurity/import/scan-directory, POST /cybersecurity/network-events, "
           "POST /cybersecurity/security-events, POST /cybersecurity/auth-events, POST /cybersecurity/import/network-csv, "
@@ -130,6 +130,30 @@ def build_handler(
                     {
                         "alerts": alerts,
                         "triggered_rules": service.get_triggered_rules(),
+                    },
+                )
+                return
+
+            if path == "/cybersecurity/auth-events":
+                try:
+                    auth_events = service.get_auth_events(
+                        username=_get_query_value(query, "username"),
+                        source_ip=_get_query_value(query, "source_ip"),
+                        auth_method=_get_query_value(query, "auth_method"),
+                        result=_get_query_value(query, "result"),
+                        target_resource=_get_query_value(query, "target_resource"),
+                        failure_reason=_get_query_value(query, "failure_reason"),
+                        is_privileged=_get_query_bool(query, "is_privileged"),
+                        query=_get_query_value(query, "query"),
+                        limit=_get_query_int(query, "limit") or 20,
+                    )
+                except ValueError as exc:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                self._send_json(
+                    HTTPStatus.OK,
+                    {
+                        "auth_events": auth_events,
                     },
                 )
                 return
@@ -559,6 +583,20 @@ def _get_query_int(query: Dict[str, list[str]], key: str) -> int | None:
     except ValueError as exc:
         raise ValueError(f"Query parameter '{key}' must be an integer") from exc
     return parsed if parsed > 0 else None
+
+
+def _get_query_bool(query: Dict[str, list[str]], key: str) -> bool | None:
+    value = _get_query_value(query, key)
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if normalized in {"true", "1", "yes"}:
+        return True
+    if normalized in {"false", "0", "no"}:
+        return False
+    raise ValueError(
+        f"Query parameter '{key}' must be one of: true, false, 1, 0, yes, no"
+    )
 
 
 def _build_session_cookie(name: str, value: str, max_age: int | None = None) -> str:

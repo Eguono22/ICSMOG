@@ -81,10 +81,21 @@ class CybersecurityMonitoringService:
         self,
         events: Iterable[AuthenticationEvent],
     ) -> Dict[str, Any]:
-        event_list = [event.to_security_event() for event in events]
-        result = self.ingest_security_events(event_list)
-        result["auth_events"] = len(event_list)
-        return result
+        auth_event_list = list(events)
+        security_event_list = [
+            event.to_security_event()
+            for event in auth_event_list
+        ]
+        self._ingest_security_events(security_event_list)
+        if self.store is not None:
+            self.store.save_security_events(security_event_list)
+            self.store.save_auth_events(auth_event_list)
+        return {
+            "ingested_events": len(security_event_list),
+            "auth_events": len(auth_event_list),
+            "dashboard": self.get_dashboard()["siem"],
+            "triggered_rules": self.get_triggered_rules(),
+        }
 
     def ingest_network_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         return self.ingest_network_events(_parse_network_events(payload))
@@ -486,6 +497,66 @@ class CybersecurityMonitoringService:
         if self.store is None:
             return []
         return self.store.load_import_history(limit=limit)
+
+    def get_auth_events(
+        self,
+        username: str | None = None,
+        source_ip: str | None = None,
+        auth_method: str | None = None,
+        result: str | None = None,
+        target_resource: str | None = None,
+        failure_reason: str | None = None,
+        is_privileged: bool | None = None,
+        query: str | None = None,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        if limit <= 0:
+            raise ValueError("limit must be greater than 0")
+        username = _normalize_optional_filter(username)
+        source_ip = _normalize_optional_filter(source_ip)
+        auth_method = _normalize_optional_filter(auth_method)
+        result = _normalize_optional_filter(result)
+        target_resource = _normalize_optional_filter(target_resource)
+        failure_reason = _normalize_optional_filter(failure_reason)
+        query = _normalize_optional_filter(query)
+        if result is not None:
+            _parse_enum(result, AuthenticationResult, "result")
+
+        if self.store is not None:
+            events = self.store.load_auth_events(
+                username=username,
+                source_ip=source_ip,
+                auth_method=auth_method,
+                result=result,
+                target_resource=target_resource,
+                failure_reason=failure_reason,
+                is_privileged=is_privileged,
+                query=query,
+                limit=limit,
+            )
+            return [_serialize_auth_event(event) for event in events]
+
+        events = [
+            _serialize_security_event(event)
+            for event in self.siem.get_events(category=EventCategory.AUTHENTICATION)
+        ]
+        filtered = [
+            event
+            for event in events
+            if _matches_serialized_auth_event(
+                event,
+                username=username,
+                source_ip=source_ip,
+                auth_method=auth_method,
+                result=result,
+                target_resource=target_resource,
+                failure_reason=failure_reason,
+                is_privileged=is_privileged,
+                query=query,
+            )
+        ]
+        filtered.sort(key=lambda event: event["timestamp"], reverse=True)
+        return filtered[:limit]
 
     def get_audit_log(
         self,
@@ -1229,6 +1300,61 @@ def _serialize_security_event(event: SecurityEvent) -> Dict[str, Any]:
         "failure_reason": raw_data.get("failure_reason"),
         "raw_data": raw_data,
     }
+
+
+def _serialize_auth_event(event: AuthenticationEvent) -> Dict[str, Any]:
+    return {
+        "source": event.source,
+        "username": event.username,
+        "source_ip": event.source_ip,
+        "auth_method": event.auth_method,
+        "result": event.result.value,
+        "target_resource": event.target_resource,
+        "is_privileged": event.is_privileged,
+        "failure_reason": event.failure_reason,
+        "timestamp": event.timestamp.isoformat(),
+        "raw_data": event.raw_data,
+    }
+
+
+def _matches_serialized_auth_event(
+    event: Dict[str, Any],
+    username: str | None = None,
+    source_ip: str | None = None,
+    auth_method: str | None = None,
+    result: str | None = None,
+    target_resource: str | None = None,
+    failure_reason: str | None = None,
+    is_privileged: bool | None = None,
+    query: str | None = None,
+) -> bool:
+    if username is not None and str(event.get("username", "")).lower() != username.lower():
+        return False
+    if source_ip is not None and str(event.get("source_ip", "")).lower() != source_ip.lower():
+        return False
+    if auth_method is not None and str(event.get("auth_method", "")).lower() != auth_method.lower():
+        return False
+    if result is not None and str(event.get("result", "")).lower() != result.lower():
+        return False
+    if target_resource is not None and str(event.get("target_resource") or "").lower() != target_resource.lower():
+        return False
+    if failure_reason is not None and str(event.get("failure_reason") or "").lower() != failure_reason.lower():
+        return False
+    if is_privileged is not None and bool(event.get("is_privileged")) is not is_privileged:
+        return False
+    if query is None:
+        return True
+    normalized_query = query.lower()
+    searchable_fields = [
+        event.get("source"),
+        event.get("username"),
+        event.get("source_ip"),
+        event.get("auth_method"),
+        event.get("result"),
+        event.get("target_resource"),
+        event.get("failure_reason"),
+    ]
+    return any(normalized_query in str(field or "").lower() for field in searchable_fields)
 
 
 def _build_alert_id(serialized_alert: Dict[str, Any]) -> str:

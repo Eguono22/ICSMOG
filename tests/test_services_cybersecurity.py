@@ -1,6 +1,8 @@
 """Tests for reusable cybersecurity service workflows."""
 
 import tempfile
+import uuid
+from pathlib import Path
 
 from src.cybersecurity.ids_ips import NetworkEvent
 from src.cybersecurity.siem import (
@@ -342,6 +344,90 @@ def test_service_imports_auth_csv_and_preserves_context():
     assert rules[0]["rule"] == "disabled_account_activity"
     assert auth_event.raw_data["username"] == "alice"
     assert auth_event.raw_data["is_privileged"] is True
+
+
+def test_service_filters_auth_events_in_memory():
+    service = CybersecurityMonitoringService()
+    service.ingest_auth_payload(
+        {
+            "events": [
+                {
+                    "source": "identity-provider",
+                    "username": "alice",
+                    "source_ip": "198.51.100.77",
+                    "auth_method": "password",
+                    "result": "failure",
+                    "target_resource": "admin-console",
+                    "failure_reason": "bad_password",
+                },
+                {
+                    "source": "identity-provider",
+                    "username": "bob",
+                    "source_ip": "198.51.100.88",
+                    "auth_method": "sso",
+                    "result": "success",
+                    "target_resource": "vpn-console",
+                    "is_privileged": True,
+                },
+            ]
+        }
+    )
+
+    filtered = service.get_auth_events(
+        username="bob",
+        result="success",
+        is_privileged=True,
+    )
+
+    assert len(filtered) == 1
+    assert filtered[0]["username"] == "bob"
+    assert filtered[0]["auth_method"] == "sso"
+
+
+def test_service_filters_persisted_auth_events_by_first_class_fields():
+    data_dir = Path("data")
+    data_dir.mkdir(exist_ok=True)
+    db_path = data_dir / f"test-auth-events-{uuid.uuid4().hex}.db"
+    try:
+        service = CybersecurityMonitoringService(
+            store=CybersecurityEventStore(str(db_path))
+        )
+        service.ingest_auth_payload(
+            {
+                "events": [
+                    {
+                        "source": "identity-provider",
+                        "username": "alice",
+                        "source_ip": "198.51.100.90",
+                        "auth_method": "password",
+                        "result": "denied",
+                        "target_resource": "admin-console",
+                        "failure_reason": "disabled_account",
+                        "is_privileged": True,
+                    },
+                    {
+                        "source": "identity-provider",
+                        "username": "carol",
+                        "source_ip": "198.51.100.91",
+                        "auth_method": "sso",
+                        "result": "success",
+                        "target_resource": "vpn-console",
+                    },
+                ]
+            }
+        )
+
+        filtered = service.get_auth_events(
+            failure_reason="disabled_account",
+            is_privileged=True,
+            query="alice",
+        )
+    finally:
+        db_path.unlink(missing_ok=True)
+
+    assert len(filtered) == 1
+    assert filtered[0]["username"] == "alice"
+    assert filtered[0]["result"] == "denied"
 
 
 def test_service_builds_alert_investigation_context():
