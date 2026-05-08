@@ -306,6 +306,11 @@ def test_service_records_operator_audit_history():
             }
         )
         alert_id = service.get_alerts()[0]["alert_id"]
+        note = service.add_alert_note(
+            alert_id,
+            "Confirmed as a high-risk SSH attempt during triage.",
+            operator_name="soc-lead",
+        )
         service.acknowledge_alert(alert_id, operator_name="soc-lead")
         service.import_network_csv(
             {
@@ -320,6 +325,8 @@ def test_service_records_operator_audit_history():
         audit_log = service.get_audit_log(limit=5)
         history = service.get_import_history(limit=5)
 
+    assert note["action_type"] == "add_alert_note"
+    assert note["details"]["note"] == "Confirmed as a high-risk SSH attempt during triage."
     assert audit_log[0]["operator_name"] == "soc-lead"
     assert history[0]["operator_name"] == "soc-lead"
 
@@ -462,6 +469,8 @@ def test_service_builds_alert_investigation_context():
 
     assert investigation is not None
     assert investigation["alert"]["alert_id"] == alert_id
+    assert investigation["timeline"][0]["type"] == "triggering_event"
+    assert investigation["timeline"][0]["details"]["alert_id"] == alert_id
     assert investigation["activity_log"] == []
     assert investigation["related_alerts"][0]["relationship"] == "source_ip"
 
@@ -503,6 +512,11 @@ def test_service_builds_auth_aware_investigation_context():
     investigation = service.get_alert_investigation(alert_id)
 
     assert investigation is not None
+    assert {entry["type"] for entry in investigation["timeline"]} >= {
+        "triggering_event",
+        "auth_event",
+        "rule_match",
+    }
     assert investigation["auth_activity"][0]["source_ip"] == "203.0.113.200"
     assert investigation["auth_activity"][0]["username"] == "admin"
     assert investigation["related_rule_activity"][0]["rule"] == "brute_force_detection"

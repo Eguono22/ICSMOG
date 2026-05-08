@@ -36,7 +36,7 @@ def run_cybersecurity_api_server(
       "POST /cybersecurity/operators, POST /cybersecurity/import/scan-directory, POST /cybersecurity/network-events, "
           "POST /cybersecurity/security-events, POST /cybersecurity/auth-events, POST /cybersecurity/import/network-csv, "
           "POST /cybersecurity/import/security-csv, POST /cybersecurity/import/auth-csv, POST /cybersecurity/alerts/<id>/acknowledge, "
-          "POST /cybersecurity/alerts/<id>/resolve")
+          "POST /cybersecurity/alerts/<id>/resolve, POST /cybersecurity/alerts/<id>/notes")
     print("Bootstrap accounts: analyst-1 / icsmog-demo-key, admin / icsmog-admin-key")
     try:
         server.serve_forever()
@@ -247,6 +247,34 @@ def build_handler(
                     {"status": "logged_out"},
                     cookies=[_build_session_cookie("icsmog_session", "", max_age=0)],
                 )
+                return
+
+            if path.startswith("/cybersecurity/alerts/") and path.endswith("/notes"):
+                operator = self._require_operator("add_alert_note")
+                if operator is None:
+                    return
+                alert_id = path.removeprefix("/cybersecurity/alerts/").removesuffix(
+                    "/notes"
+                )
+                payload, error = self._read_json_body()
+                if error is not None:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": error})
+                    return
+                try:
+                    result = service.add_alert_note(
+                        alert_id,
+                        note=str(payload.get("note", "")),
+                        operator_name=operator["username"],
+                    )
+                except ValueError as exc:
+                    self._send_json(
+                        HTTPStatus.NOT_FOUND
+                        if "not found" in str(exc).lower()
+                        else HTTPStatus.BAD_REQUEST,
+                        {"error": str(exc), "alert_id": alert_id},
+                    )
+                    return
+                self._send_json(HTTPStatus.CREATED, result)
                 return
 
             if path.startswith("/cybersecurity/alerts/") and path.endswith(

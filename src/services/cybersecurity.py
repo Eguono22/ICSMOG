@@ -26,10 +26,11 @@ from src.cybersecurity.siem import (
 from src.storage import CybersecurityEventStore
 
 ROLE_PERMISSIONS = {
-    "analyst": {"import_csv", "acknowledge_alert"},
+    "analyst": {"import_csv", "acknowledge_alert", "add_alert_note"},
     "admin": {
         "import_csv",
         "acknowledge_alert",
+        "add_alert_note",
         "resolve_alert",
         "manage_operators",
     },
@@ -425,15 +426,25 @@ class CybersecurityMonitoringService:
         alert = self.get_alert_by_id(alert_id)
         if alert is None:
             return None
+        activity_log = self.get_audit_log(limit=activity_limit, target=alert_id)
+        related_alerts = self._get_related_alerts(alert, limit=related_limit)
+        auth_activity = self._get_related_auth_activity(alert, limit=activity_limit)
+        related_rule_activity = self._get_related_rule_activity(
+            alert,
+            limit=related_limit,
+        )
         return {
             "alert": alert,
-            "activity_log": self.get_audit_log(limit=activity_limit, target=alert_id),
-            "related_alerts": self._get_related_alerts(alert, limit=related_limit),
-            "auth_activity": self._get_related_auth_activity(alert, limit=activity_limit),
-            "related_rule_activity": self._get_related_rule_activity(
+            "timeline": self._build_investigation_timeline(
                 alert,
-                limit=related_limit,
+                activity_log=activity_log,
+                auth_activity=auth_activity,
+                related_rule_activity=related_rule_activity,
             ),
+            "activity_log": activity_log,
+            "related_alerts": related_alerts,
+            "auth_activity": auth_activity,
+            "related_rule_activity": related_rule_activity,
         }
 
     def acknowledge_alert(
@@ -460,6 +471,36 @@ class CybersecurityMonitoringService:
             )
         serialized["updated_by"] = operator_name
         return serialized
+
+    def add_alert_note(
+        self,
+        alert_id: str,
+        note: str,
+        operator_name: str = "system",
+    ) -> Dict[str, Any]:
+        operator_name = _normalize_operator_name(operator_name)
+        alert = self.get_alert_by_id(alert_id)
+        if alert is None:
+            raise ValueError(f"Alert '{alert_id}' was not found")
+        normalized_note = str(note).strip()
+        if not normalized_note:
+            raise ValueError("note is required")
+        if len(normalized_note) > 2000:
+            raise ValueError("note must be 2000 characters or fewer")
+        note_record = {
+            "operator_name": operator_name,
+            "action_type": "add_alert_note",
+            "target": alert_id,
+            "status": "success",
+            "details": {"note": normalized_note},
+        }
+        if self.store is not None:
+            self.store.record_audit_event(**note_record)
+            stored = self.get_audit_log(limit=1, target=alert_id)
+            if stored:
+                return stored[0]
+        note_record["created_at"] = datetime.datetime.now(datetime.UTC).isoformat()
+        return note_record
 
     def resolve_alert(
         self,
@@ -834,6 +875,76 @@ class CybersecurityMonitoringService:
             rule_with_context["relationship"] = relationship
             related_rules.append(rule_with_context)
         return related_rules[:limit]
+
+    def _build_investigation_timeline(
+        self,
+        alert: Dict[str, Any],
+        activity_log: List[Dict[str, Any]],
+        auth_activity: List[Dict[str, Any]],
+        related_rule_activity: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        timeline = [
+            {
+                "type": "triggering_event",
+                "occurred_at": alert["created_at"],
+                "title": alert["description"],
+                "summary": (
+                    f"{alert['source_ip']} -> {alert['destination_ip']} "
+                    f"on {alert['protocol']}/{alert['port']}"
+                ),
+                "details": {
+                    "alert_id": alert["alert_id"],
+                    "threat_level": alert["threat_level"],
+                    "status": alert["status"],
+                    "payload_size": alert["payload_size"],
+                },
+            }
+        ]
+        for rule in related_rule_activity:
+            timeline.append(
+                {
+                    "type": "rule_match",
+                    "occurred_at": rule.get("triggered_at"),
+                    "title": rule.get("rule", "Correlation rule"),
+                    "summary": rule.get("description", ""),
+                    "details": {
+                        "relationship": rule.get("relationship"),
+                        "severity": rule.get("severity"),
+                        "rule_details": rule.get("details", {}),
+                    },
+                }
+            )
+        for auth_event in auth_activity:
+            timeline.append(
+                {
+                    "type": "auth_event",
+                    "occurred_at": auth_event.get("timestamp"),
+                    "title": (
+                        f"{auth_event.get('username') or 'unknown user'} "
+                        f"{auth_event.get('result') or 'auth event'}"
+                    ),
+                    "summary": (
+                        f"{auth_event.get('source_ip') or 'unknown IP'} "
+                        f"against {auth_event.get('target_resource') or 'unknown resource'}"
+                    ),
+                    "details": auth_event,
+                }
+            )
+        for activity in activity_log:
+            timeline.append(
+                {
+                    "type": "operator_action",
+                    "occurred_at": activity.get("created_at"),
+                    "title": str(activity.get("action_type", "operator_action")),
+                    "summary": (
+                        f"{activity.get('operator_name')} recorded "
+                        f"{activity.get('status', 'success')}"
+                    ),
+                    "details": activity,
+                }
+            )
+        timeline.sort(key=lambda entry: str(entry.get("occurred_at") or ""))
+        return timeline
 
 
 def build_sample_network_events() -> List[NetworkEvent]:

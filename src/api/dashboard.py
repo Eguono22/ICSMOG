@@ -1840,7 +1840,8 @@ def render_alert_detail_html(alert_id: str) -> str:
       color: var(--muted);
     }}
 
-    .field input {{
+    .field input,
+    .field textarea {{
       width: 100%;
       border: 1px solid var(--line);
       border-radius: 14px;
@@ -1848,6 +1849,12 @@ def render_alert_detail_html(alert_id: str) -> str:
       font: inherit;
       color: var(--ink);
       background: rgba(255, 255, 255, 0.82);
+    }}
+
+    .field textarea {{
+      min-height: 88px;
+      resize: vertical;
+      line-height: 1.5;
     }}
 
     .action-button {{
@@ -1987,9 +1994,14 @@ def render_alert_detail_html(alert_id: str) -> str:
           <input id="operator-key" type="password" placeholder="icsmog-demo-key">
         </div>
       </div>
+      <div class="field" style="margin-top: 14px;">
+        <label for="alert-note">Investigation Note</label>
+        <textarea id="alert-note" placeholder="Add a concise operator note for this alert."></textarea>
+      </div>
       <div class="action-bar">
         <button class="action-button secondary" id="login-button" type="button">Sign In</button>
         <button class="action-button secondary" id="logout-button" type="button">Sign Out</button>
+        <button class="action-button secondary" id="note-button" type="button">Add Note</button>
         <button class="action-button secondary" id="acknowledge-button" type="button">Acknowledge</button>
         <button class="action-button" id="resolve-button" type="button">Resolve</button>
       </div>
@@ -2132,31 +2144,51 @@ def render_alert_detail_html(alert_id: str) -> str:
           <div class="value">${{escapeHtml(value)}}</div>
         </article>
       `).join('');
-      renderActivityLog(payload.activity_log || []);
+      renderTimeline(payload.timeline || [], payload.activity_log || []);
       renderRelatedAlerts(payload.related_alerts || []);
       renderAuthActivity(authActivity);
       renderRuleMatches(ruleMatches);
       document.getElementById("raw-json").textContent = JSON.stringify(payload, null, 2);
     }}
 
-    function renderActivityLog(entries) {{
+    function renderTimeline(timeline, fallbackActivityLog) {{
       const node = document.getElementById("activity-log");
+      const entries = timeline.length ? timeline : fallbackActivityLog;
       if (!entries.length) {{
         node.innerHTML = '<div class="empty">No lifecycle actions have been recorded for this alert yet.</div>';
         return;
       }}
       node.innerHTML = entries.map((entry) => `
         <article class="timeline-card">
-          <div class="card-title">${{escapeHtml(entry.action_type.replaceAll("_", " "))}}</div>
+          <div class="card-title">${{escapeHtml((entry.title || entry.action_type || entry.type || "timeline event").replaceAll("_", " "))}}</div>
           <div class="card-meta">
-            Operator ${{escapeHtml(entry.operator_name)}} changed target ${{escapeHtml(entry.target)}} with status ${{escapeHtml(entry.status)}}.
+            ${{escapeHtml(formatTimelineSummary(entry))}}
           </div>
           <div class="chip-row">
-            <span class="chip">${{escapeHtml(formatTimestamp(entry.created_at))}}</span>
-            <span class="chip">${{escapeHtml((entry.details?.status || entry.status || "recorded"))}}</span>
+            <span class="chip">${{escapeHtml(formatTimestamp(entry.occurred_at || entry.created_at))}}</span>
+            <span class="chip">${{escapeHtml(entry.type || entry.action_type || "recorded")}}</span>
           </div>
+          ${{formatTimelineNote(entry)}}
         </article>
       `).join("");
+    }}
+
+    function formatTimelineSummary(entry) {{
+      if (entry.summary) {{
+        return entry.summary;
+      }}
+      if (entry.operator_name) {{
+        return `Operator ${{entry.operator_name}} changed target ${{entry.target}} with status ${{entry.status}}.`;
+      }}
+      return "Investigation activity recorded.";
+    }}
+
+    function formatTimelineNote(entry) {{
+      const note = entry.details?.details?.note || entry.details?.note;
+      if (!note) {{
+        return "";
+      }}
+      return `<div class="card-meta">${{escapeHtml(note)}}</div>`;
     }}
 
     function renderRelatedAlerts(alerts) {{
@@ -2237,6 +2269,27 @@ def render_alert_detail_html(alert_id: str) -> str:
         `Alert updated by ${{payload.updated_by}}: status is now ${{payload.status}}.`;
     }}
 
+    async function addNote() {{
+      const note = document.getElementById("alert-note").value.trim();
+      if (!note) {{
+        throw new Error("Write a note before adding it to the investigation.");
+      }}
+      const response = await fetch(`/cybersecurity/alerts/${{encodeURIComponent(alertId)}}/notes`, {{
+        method: "POST",
+        credentials: "same-origin",
+        headers: {{ "Content-Type": "application/json" }},
+        body: JSON.stringify({{ note }}),
+      }});
+      const payload = await response.json();
+      if (!response.ok) {{
+        throw new Error(payload.error || "Unable to add alert note");
+      }}
+      document.getElementById("alert-note").value = "";
+      await loadInvestigation();
+      document.getElementById("action-status").textContent =
+        `Note added by ${{payload.operator_name}}.`;
+    }}
+
     function formatTimestamp(value) {{
       const date = new Date(value);
       if (Number.isNaN(date.getTime())) {{
@@ -2310,6 +2363,12 @@ def render_alert_detail_html(alert_id: str) -> str:
 
     document.getElementById("acknowledge-button").addEventListener("click", () => {{
       applyAction("acknowledge").catch((error) => {{
+        document.getElementById("action-status").textContent = error.message;
+      }});
+    }});
+
+    document.getElementById("note-button").addEventListener("click", () => {{
+      addNote().catch((error) => {{
         document.getElementById("action-status").textContent = error.message;
       }});
     }});

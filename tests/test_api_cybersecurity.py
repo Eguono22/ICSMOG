@@ -463,6 +463,7 @@ def test_alert_investigation_endpoint_returns_activity_and_related_alerts():
         thread.join(timeout=5)
 
     assert investigation["alert"]["alert_id"] == alert_id
+    assert investigation["timeline"][0]["type"] == "triggering_event"
     assert investigation["activity_log"] == []
     assert investigation["related_alerts"][0]["source_ip"] == "198.51.100.55"
     assert investigation["related_alerts"][0]["relationship"] == "source_ip"
@@ -497,6 +498,14 @@ def test_alert_lifecycle_endpoints_update_status():
             )
             alerts = _read_json(f"{base_url}/cybersecurity/alerts")
             alert_id = alerts["alerts"][0]["alert_id"]
+            note = _read_json(
+                f"{base_url}/cybersecurity/alerts/{alert_id}/notes",
+                method="POST",
+                payload={
+                    "note": "Operator confirmed this alert during API triage."
+                },
+                headers=ANALYST_HEADERS,
+            )
             acknowledged = _read_json(
                 f"{base_url}/cybersecurity/alerts/{alert_id}/acknowledge",
                 method="POST",
@@ -509,17 +518,31 @@ def test_alert_lifecycle_endpoints_update_status():
                 payload={},
                 headers=ADMIN_HEADERS,
             )
+            investigation = _read_json(
+                f"{base_url}/cybersecurity/alerts/{alert_id}/investigation"
+            )
             audit_log = _read_json(f"{base_url}/cybersecurity/audit-log?limit=5")
         finally:
             server.shutdown()
             server.server_close()
             thread.join(timeout=5)
 
+    note_entries = [
+        entry
+        for entry in investigation["timeline"]
+        if entry["type"] == "operator_action"
+        and entry["details"]["action_type"] == "add_alert_note"
+    ]
+    assert note["action_type"] == "add_alert_note"
+    assert note["details"]["note"] == "Operator confirmed this alert during API triage."
     assert acknowledged["status"] == "acknowledged"
     assert acknowledged["updated_by"] == "analyst-1"
     assert resolved["status"] == "resolved"
     assert resolved["updated_by"] == "admin"
     assert resolved["resolved_at"] is not None
+    assert note_entries[0]["details"]["details"]["note"] == (
+        "Operator confirmed this alert during API triage."
+    )
     assert audit_log["audit_log"][0]["action_type"] == "resolve_alert"
     assert audit_log["audit_log"][0]["operator_name"] == "admin"
 
