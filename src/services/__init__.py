@@ -9,6 +9,7 @@ from .cybersecurity import (
     process_network_events,
     process_security_events,
     run_sample_cybersecurity_scenario,
+    seed_mvp_demo_data,
 )
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "process_network_events",
     "process_security_events",
     "run_sample_cybersecurity_scenario",
+    "seed_mvp_demo_data",
 ]

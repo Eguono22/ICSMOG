@@ -21,6 +21,7 @@ from src.services.cybersecurity import (
     process_network_events,
     process_security_events,
     run_sample_cybersecurity_scenario,
+    seed_mvp_demo_data,
 )
 from src.storage import CybersecurityEventStore
 
@@ -546,3 +547,22 @@ def test_service_bootstraps_and_creates_operator_accounts():
     assert analyst["role"] == "analyst"
     assert created["username"] == "tier2-analyst"
     assert any(operator["username"] == "tier2-analyst" for operator in operators)
+
+
+def test_seed_mvp_demo_data_populates_empty_service_once():
+    service = CybersecurityMonitoringService()
+
+    first_seed = seed_mvp_demo_data(service)
+    second_seed = seed_mvp_demo_data(service)
+    dashboard = service.get_dashboard()
+
+    assert first_seed["seeded"] is True
+    assert first_seed["network_seeded"] is True
+    assert first_seed["auth_seeded"] is True
+    assert second_seed["seeded"] is False
+    assert second_seed["network_seeded"] is False
+    assert second_seed["auth_seeded"] is False
+    assert dashboard["ips"]["total_events"] == 2
+    assert dashboard["ips"]["total_alerts"] == 2
+    assert dashboard["siem"]["auth_summary"]["total_events"] == 5
+    assert dashboard["siem"]["triggered_rules"] >= 1

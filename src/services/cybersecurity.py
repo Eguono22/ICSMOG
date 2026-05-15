@@ -36,6 +36,10 @@ ROLE_PERMISSIONS = {
     },
 }
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_MVP_NETWORK_CSV_PATH = PROJECT_ROOT / "examples" / "network_events.csv"
+DEFAULT_MVP_AUTH_CSV_PATH = PROJECT_ROOT / "examples" / "auth_events.csv"
+
 
 class CybersecurityMonitoringService:
     """Stateful service for ingesting events and querying current security state."""
@@ -1048,6 +1052,41 @@ def run_sample_cybersecurity_scenario(verbose: bool = True) -> Dict[str, Any]:
         "ips": ips_result,
         "siem": siem_result,
     }
+
+
+def seed_mvp_demo_data(
+    service: CybersecurityMonitoringService,
+    operator_name: str = "bootstrap",
+) -> Dict[str, Any]:
+    """Load bundled cybersecurity sample data into an empty service instance."""
+    summary: Dict[str, Any] = {
+        "seeded": False,
+        "network_seeded": False,
+        "auth_seeded": False,
+        "network_source": str(DEFAULT_MVP_NETWORK_CSV_PATH),
+        "auth_source": str(DEFAULT_MVP_AUTH_CSV_PATH),
+    }
+
+    dashboard = service.get_dashboard()
+    if dashboard["ips"]["total_events"] == 0:
+        service.import_network_csv(
+            {"csv_path": str(DEFAULT_MVP_NETWORK_CSV_PATH)},
+            operator_name=operator_name,
+        )
+        summary["seeded"] = True
+        summary["network_seeded"] = True
+
+    dashboard = service.get_dashboard()
+    if dashboard["siem"]["auth_summary"]["total_events"] == 0:
+        service.import_auth_csv(
+            {"csv_path": str(DEFAULT_MVP_AUTH_CSV_PATH)},
+            operator_name=operator_name,
+        )
+        summary["seeded"] = True
+        summary["auth_seeded"] = True
+
+    summary["dashboard"] = service.get_dashboard()
+    return summary
 
 
 def _parse_network_events(payload: Dict[str, Any]) -> List[NetworkEvent]:

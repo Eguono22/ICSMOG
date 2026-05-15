@@ -11,7 +11,10 @@ from urllib.parse import parse_qs, urlsplit
 from typing import Any, Dict, Tuple
 
 from src.api.dashboard import render_alert_detail_html, render_dashboard_html
-from src.services.cybersecurity import CybersecurityMonitoringService
+from src.services.cybersecurity import (
+    CybersecurityMonitoringService,
+    seed_mvp_demo_data,
+)
 from src.storage import CybersecurityEventStore
 
 
@@ -19,17 +22,27 @@ def run_cybersecurity_api_server(
     host: str = "127.0.0.1",
     port: int = 8000,
     storage_path: str = "data/cybersecurity.db",
+    seed_demo_data: bool = False,
 ) -> None:
     """Run the cybersecurity API server until interrupted."""
     service = CybersecurityMonitoringService(
         store=CybersecurityEventStore(storage_path)
     )
+    seed_summary: dict[str, Any] | None = None
+    if seed_demo_data:
+        seed_summary = seed_mvp_demo_data(service)
     server = ThreadingHTTPServer(
         (host, port),
         build_handler(service),
     )
     print(f"ICSMOG cybersecurity API listening on http://{host}:{port}")
     print(f"Using SQLite storage at {storage_path}")
+    if seed_summary is not None:
+        print(
+            "MVP demo data: "
+            f"network_seeded={seed_summary['network_seeded']}, "
+            f"auth_seeded={seed_summary['auth_seeded']}"
+        )
     print("Available endpoints: GET /, GET /dashboard, GET /health, GET /cybersecurity/dashboard, "
       "GET /cybersecurity/alerts, GET /cybersecurity/auth-events, GET /cybersecurity/alerts/<id>/investigation, GET /cybersecurity/import-history, GET /cybersecurity/audit-log, GET /cybersecurity/me, "
       "GET /cybersecurity/operators, POST /cybersecurity/login, POST /cybersecurity/logout, "

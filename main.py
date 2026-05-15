@@ -198,7 +198,7 @@ def demo_customer(verbose: bool = True) -> Dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="ICSMOG demo runner for organizational monitoring modules."
+        description="ICSMOG CLI for cybersecurity demos, API workflows, and multi-domain samples."
     )
     parser.add_argument(
         "--step",
@@ -215,6 +215,14 @@ def main() -> None:
         "--serve-api",
         action="store_true",
         help="Run the minimal cybersecurity HTTP API server.",
+    )
+    parser.add_argument(
+        "--mvp-demo",
+        action="store_true",
+        help=(
+            "Start the cybersecurity API with bundled sample network and auth "
+            "data so the dashboard is immediately populated."
+        ),
     )
     parser.add_argument(
         "--host",
@@ -258,11 +266,12 @@ def main() -> None:
         6: demo_customer,
     }
 
-    if args.serve_api:
+    if args.serve_api or args.mvp_demo:
         run_cybersecurity_api_server(
             host=args.host,
             port=args.port,
             storage_path=args.storage_path,
+            seed_demo_data=args.mvp_demo,
         )
         return
 

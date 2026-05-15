@@ -2,9 +2,9 @@
 
 **Intelligent Computer Systems for Monitoring Organizations**
 
-ICSMOG is a Python monitoring framework for simulating and validating organizational observability workflows. The strongest current use case is **cybersecurity monitoring**: detecting suspicious network activity, correlating security events, and demonstrating automated response behavior from a single codebase.
+ICSMOG is a Python cybersecurity monitoring application-in-progress for simulating and validating security workflows. The strongest current use case is **security monitoring for small teams**: detecting suspicious network activity, correlating authentication and security events, and demonstrating explainable response behavior from a single codebase.
 
-The repository also includes supporting modules for business intelligence, infrastructure monitoring, workforce analytics, maintenance, and customer intelligence, but those should be treated as adjacent capabilities while the project matures.
+The repository also includes supporting modules for business intelligence, infrastructure monitoring, workforce analytics, maintenance, and customer intelligence, but those should be treated as adjacent capabilities while the cybersecurity product surface matures.
 
 ## Why This Project
 
@@ -16,12 +16,12 @@ Many monitoring tools are either too narrow to show cross-domain visibility or t
 
 ## Current Positioning
 
-Today, ICSMOG is best understood as a **framework and simulation platform**, not a finished production application.
+Today, ICSMOG is best understood as a **local MVP for cybersecurity workflows**, not a finished production application.
 
 What works well now:
 
-- modular Python classes for six monitoring domains
-- a runnable CLI demo that exercises each subsystem
+- a runnable cybersecurity API and browser dashboard
+- a one-command MVP demo path with bundled network and auth sample data
 - JSON output for lightweight automation and testing
 - persistent SQLite-backed cybersecurity event history through the API
 - built-in cybersecurity dashboard served from the same API process
@@ -100,7 +100,40 @@ cd ICSMOG
 pip install -r requirements.txt
 ```
 
+## Start Here
+
+If you want to evaluate ICSMOG as a product, start with the cybersecurity MVP flow instead of the full multi-domain demo:
+
+```bash
+python main.py --mvp-demo
+```
+
+Then open `http://127.0.0.1:8000/dashboard` and sign in with:
+
+- `analyst-1` / `icsmog-demo-key`
+- `admin` / `icsmog-admin-key`
+
+The MVP demo preloads bundled network and authentication samples into an empty database so the dashboard opens with realistic alerts, auth history, and rule activity already present.
+
 ## Running
+
+Recommended first run for product evaluation:
+
+```bash
+python main.py --mvp-demo
+```
+
+Run the cybersecurity API and dashboard without preloaded sample data:
+
+```bash
+python main.py --serve-api
+```
+
+Use a custom SQLite path if needed:
+
+```bash
+python main.py --mvp-demo --storage-path data/cybersecurity.db
+```
 
 Run the full multi-domain demo:
 
@@ -124,18 +157,6 @@ Output JSON for a single step:
 
 ```bash
 python main.py --step 1 --json
-```
-
-Run the cybersecurity API and dashboard:
-
-```bash
-python main.py --serve-api
-```
-
-Use a custom SQLite path if needed:
-
-```bash
-python main.py --serve-api --storage-path data/cybersecurity.db
 ```
 
 Scan a watch folder once for CSV files:
@@ -242,28 +263,26 @@ processed.
 If you are evaluating ICSMOG as a future application, the most promising path is:
 
 1. focus the product around cybersecurity monitoring
-2. add persistent event storage
-3. expose alerts and dashboards through an API
-4. refine the built-in dashboard into a more complete operations UI
-5. add real connectors for logs, auth events, or CSV imports
+2. validate the `--mvp-demo` workflow with real small-team operators
+3. refine the built-in dashboard into a more complete triage UI
+4. add real connectors for logs, auth events, or CSV imports
+5. harden deployment, identity, and operations workflows
 
 ## Roadmap
 
 ### Available Now
 
-- modular monitoring classes
-- demo runner with sample scenarios
+- cybersecurity API, dashboard, and persisted history
+- MVP demo runner with bundled sample security data
 - JSON-formatted output
 - unit test coverage for domain behavior
 
 ### Next
 
-- clearer cybersecurity-first architecture
-- reusable service layer instead of demo-only flows
-- richer alert querying and filtering on top of persisted history
-- minimal API endpoints for ingestion and reporting
+- sharper onboarding and first-run conversion from repo to working demo
 - better dashboard workflows for investigation and triage
-- automatic file-based ingestion for recurring CSV feeds
+- more realistic external connectors beyond CSV imports
+- clearer packaging and deployment for repeatable evaluation environments
 
 ### Later
 

@@ -44,3 +44,24 @@ class TestMainCLI:
             main.main()
 
         assert exc_info.value.code == 2
+
+    def test_mvp_demo_starts_seeded_api_server(self, monkeypatch):
+        captured = {}
+
+        def fake_run_server(**kwargs):
+            captured.update(kwargs)
+
+        monkeypatch.setattr(
+            "sys.argv",
+            ["main.py", "--mvp-demo", "--host", "0.0.0.0", "--port", "9000"],
+        )
+        monkeypatch.setattr(main, "run_cybersecurity_api_server", fake_run_server)
+
+        main.main()
+
+        assert captured == {
+            "host": "0.0.0.0",
+            "port": 9000,
+            "storage_path": "data/cybersecurity.db",
+            "seed_demo_data": True,
+        }
