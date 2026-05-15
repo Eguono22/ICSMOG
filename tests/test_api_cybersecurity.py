@@ -112,6 +112,9 @@ def test_dashboard_page_renders_html():
     assert "Only Privileged" in html
     assert "Open Investigation" in html
     assert "Quick triage is ready" in html
+    assert "Auth Log (NDJSON)" in html
+    assert "Auth Log Sample" in html
+    assert "/cybersecurity/import/auth-log" in html
     assert "/cybersecurity/auth-events" in html
     assert "text/html" in content_type
 

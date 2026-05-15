@@ -826,7 +826,7 @@ def render_dashboard_html() -> str:
         <div class="panel-topline">
           <div>
             <h2>Operator Controls</h2>
-            <p class="panel-copy">Paste inline CSV, choose the target pipeline, and trigger imports without leaving the console.</p>
+            <p class="panel-copy">Paste inline CSV or auth-log NDJSON, choose the target pipeline, and trigger imports without leaving the console.</p>
           </div>
         </div>
         <div class="operator-controls">
@@ -858,6 +858,7 @@ def render_dashboard_html() -> str:
                 <option value="network">Network</option>
                 <option value="security">Security</option>
                 <option value="auth">Auth</option>
+                <option value="auth-log">Auth Log (NDJSON)</option>
               </select>
             </div>
             <div class="operator-field">
@@ -867,21 +868,22 @@ def render_dashboard_html() -> str:
                 <option value="network-sample">Network Sample</option>
                 <option value="security-sample">Security Sample</option>
                 <option value="auth-sample">Auth Sample</option>
+                <option value="auth-log-sample">Auth Log Sample</option>
               </select>
             </div>
           </div>
           <div class="operator-field">
-            <label for="import-editor">CSV Payload</label>
+            <label for="import-editor">Import Payload</label>
             <textarea
               id="import-editor"
               spellcheck="false"
-              placeholder="Paste CSV rows here or load a sample template."
+              placeholder="Paste CSV rows or newline-delimited JSON records here, or load a sample template."
             ></textarea>
           </div>
           <div class="operator-actions">
             <button class="primary" id="run-import" type="button">
-              <span class="button-title">Run CSV Import</span>
-              <span class="button-copy">Send the current CSV payload through the selected pipeline.</span>
+              <span class="button-title">Run Import</span>
+              <span class="button-copy">Send the current payload through the selected pipeline.</span>
             </button>
             <button class="secondary" id="clear-import" type="button">
               <span class="button-title">Clear Editor</span>
@@ -1025,6 +1027,9 @@ def render_dashboard_html() -> str:
         "identity-provider,admin,198.51.100.25,password,failure,admin-console,true,bad_password\\n" +
         "identity-provider,admin,198.51.100.25,password,failure,admin-console,true,bad_password\\n" +
         "identity-provider,admin,198.51.100.25,password,failure,admin-console,true,bad_password\\n",
+      "auth-log-sample":
+        '{"timestamp":"2026-05-15T08:30:00+00:00","provider":"entra-id","user":{"username":"alice","roles":["admin"]},"client":{"ip":"198.51.100.77"},"auth":{"method":"password","result":"denied","reason":"disabled_account"},"target":{"resource":"admin-console"}}\\n' +
+        '{"timestamp":"2026-05-15T08:31:00+00:00","service":"okta","actor":{"name":"bob"},"source":{"ip":"198.51.100.88"},"authentication":{"method":"sso","result":"success"},"application":"vpn-console"}\\n',
     };
 
     async function fetchJson(path, options = {}) {
@@ -1598,31 +1603,42 @@ def render_dashboard_html() -> str:
         document.getElementById("import-target").value = "security";
       } else if (template === "auth-sample") {
         document.getElementById("import-target").value = "auth";
+      } else if (template === "auth-log-sample") {
+        document.getElementById("import-target").value = "auth-log";
       }
 
       setOperatorStatus(
         template === "blank"
-          ? "Editor cleared. Paste a CSV payload or load a sample template."
+          ? "Editor cleared. Paste CSV rows, auth-log NDJSON, or load a sample template."
           : "Sample template loaded. Review the payload and run the import when ready."
       );
     }
 
     async function runInlineImport() {
       const target = document.getElementById("import-target").value;
-      const csvText = document.getElementById("import-editor").value.trim();
+      const importText = document.getElementById("import-editor").value.trim();
 
-      if (!csvText) {
-        setOperatorStatus("Add CSV rows before running an import.", "error");
+      if (!importText) {
+        setOperatorStatus("Add import content before running an import.", "error");
         return;
       }
 
-      setOperatorStatus(`Importing ${target} CSV payload...`);
-      const result = await fetchJson(`/cybersecurity/import/${target}-csv`, {
+      const isAuthLog = target === "auth-log";
+      const endpoint = isAuthLog
+        ? "/cybersecurity/import/auth-log"
+        : `/cybersecurity/import/${target}-csv`;
+      const requestBody = isAuthLog
+        ? { log_text: importText }
+        : { csv_text: importText };
+      const payloadLabel = isAuthLog ? "auth log payload" : `${target} CSV payload`;
+
+      setOperatorStatus(`Importing ${payloadLabel}...`);
+      const result = await fetchJson(endpoint, {
         method: "POST",
-        body: JSON.stringify({ csv_text: csvText }),
+        body: JSON.stringify(requestBody),
       });
       setOperatorStatus(
-        `Imported ${result.ingested_events} ${target} event${result.ingested_events === 1 ? "" : "s"} from inline CSV as ${result.operator_name}.`,
+        `Imported ${result.ingested_events} ${target} event${result.ingested_events === 1 ? "" : "s"} from inline ${isAuthLog ? "auth-log NDJSON" : "CSV"} as ${result.operator_name}.`,
         "success"
       );
       await refreshDashboard();
@@ -1636,6 +1652,10 @@ def render_dashboard_html() -> str:
 
       if (!directoryPath) {
         setOperatorStatus("Add a server-accessible inbox directory before scanning.", "error");
+        return;
+      }
+      if (target === "auth-log") {
+        setOperatorStatus("Inbox scanning currently supports CSV targets only. Paste auth-log NDJSON inline or call /cybersecurity/import/auth-log.", "error");
         return;
       }
 
