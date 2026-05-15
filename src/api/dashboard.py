@@ -434,13 +434,60 @@ def render_dashboard_html() -> str:
     }
 
     .alert-link {
+      display: block;
       color: inherit;
       text-decoration: none;
     }
 
-    .alert-link:hover .alert-card {
+    .alert-card:hover {
       border-color: rgba(198, 90, 61, 0.35);
       box-shadow: 0 10px 22px rgba(21, 35, 45, 0.07);
+    }
+
+    .alert-card:hover .alert-title {
+      color: var(--accent-deep);
+    }
+
+    .alert-actions {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(21, 35, 45, 0.08);
+      flex-wrap: wrap;
+    }
+
+    .action-cluster {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .inline-action {
+      padding: 10px 14px;
+      border-radius: 14px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .inline-action:disabled {
+      cursor: not-allowed;
+      opacity: 0.5;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .detail-link {
+      color: var(--accent-deep);
+      font-size: 13px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    .detail-link:hover {
+      text-decoration: underline;
     }
 
     .tag {
@@ -683,6 +730,12 @@ def render_dashboard_html() -> str:
             <label for="filter-query">Search</label>
             <input id="filter-query" type="text" placeholder="alert id, port, or description">
           </div>
+        </div>
+        <div class="footer-note" id="triage-help">
+          Sign in to acknowledge or resolve alerts directly from the list.
+        </div>
+        <div class="operator-status" id="alerts-action-status">
+          Quick triage is ready when an alert appears.
         </div>
         <div class="stack" id="alerts-list">
           <div class="empty-state">No alerts yet. Use the demo actions above or post to the API.</div>
@@ -1072,25 +1125,55 @@ def render_dashboard_html() -> str:
       }
 
       const cards = dashboardState.alerts
-        .map((alert) => `
-          <a class="alert-link" href="/dashboard/alerts/${encodeURIComponent(alert.alert_id)}">
+        .map((alert) => {
+          const canAcknowledge = Boolean(dashboardState.operatorProfile) && alert.status === "open";
+          const canResolve = dashboardState.operatorProfile?.role === "admin" && alert.status !== "resolved";
+          const acknowledgeLabel = alert.status === "open" ? "Acknowledge" : "Acknowledged";
+          const resolveLabel = alert.status === "resolved" ? "Resolved" : "Resolve";
+
+          return `
             <article class="alert-card">
-              <div class="alert-head">
-                <div class="alert-title">${escapeHtml(alert.description)}</div>
-                <span class="tag ${escapeHtml(alert.threat_level)}">${escapeHtml(alert.threat_level)}</span>
-              </div>
-              <div class="muted">
-                ${escapeHtml(alert.source_ip)} -> ${escapeHtml(alert.destination_ip)} on port ${escapeHtml(String(alert.port))}
-              </div>
-              <div class="muted">
-                Protocol ${escapeHtml(alert.protocol)} | Payload ${escapeHtml(String(alert.payload_size))} bytes | Status ${escapeHtml(alert.status)}
-              </div>
-              <div class="muted">
-                Alert ${escapeHtml(alert.alert_id)} | Created ${formatTimestamp(alert.created_at)}
+              <a class="alert-link" href="/dashboard/alerts/${encodeURIComponent(alert.alert_id)}">
+                <div class="alert-head">
+                  <div class="alert-title">${escapeHtml(alert.description)}</div>
+                  <span class="tag ${escapeHtml(alert.threat_level)}">${escapeHtml(alert.threat_level)}</span>
+                </div>
+                <div class="muted">
+                  ${escapeHtml(alert.source_ip)} -> ${escapeHtml(alert.destination_ip)} on port ${escapeHtml(String(alert.port))}
+                </div>
+                <div class="muted">
+                  Protocol ${escapeHtml(alert.protocol)} | Payload ${escapeHtml(String(alert.payload_size))} bytes | Status ${escapeHtml(alert.status)}
+                </div>
+                <div class="muted">
+                  Alert ${escapeHtml(alert.alert_id)} | Created ${formatTimestamp(alert.created_at)}
+                </div>
+              </a>
+              <div class="alert-actions">
+                <a class="detail-link" href="/dashboard/alerts/${encodeURIComponent(alert.alert_id)}">Open Investigation</a>
+                <div class="action-cluster">
+                  <button
+                    class="secondary inline-action"
+                    type="button"
+                    data-alert-action="acknowledge"
+                    data-alert-id="${escapeHtml(alert.alert_id)}"
+                    ${canAcknowledge ? "" : "disabled"}
+                  >
+                    ${acknowledgeLabel}
+                  </button>
+                  <button
+                    class="primary inline-action"
+                    type="button"
+                    data-alert-action="resolve"
+                    data-alert-id="${escapeHtml(alert.alert_id)}"
+                    ${canResolve ? "" : "disabled"}
+                  >
+                    ${resolveLabel}
+                  </button>
+                </div>
               </div>
             </article>
-          </a>
-        `)
+          `;
+        })
         .join("");
 
       container.innerHTML = cards;
@@ -1268,6 +1351,25 @@ def render_dashboard_html() -> str:
       node.className = tone ? `operator-status ${tone}` : "operator-status";
     }
 
+    function setAlertActionStatus(message, tone = "") {
+      const node = document.getElementById("alerts-action-status");
+      node.textContent = message;
+      node.className = tone ? `operator-status ${tone}` : "operator-status";
+    }
+
+    function updateTriageHelp() {
+      const node = document.getElementById("triage-help");
+      if (!dashboardState.operatorProfile) {
+        node.textContent = "Sign in to acknowledge alerts from the list. Admin credentials are required to resolve them.";
+        return;
+      }
+      if (dashboardState.operatorProfile.role === "admin") {
+        node.textContent = `Signed in as admin ${dashboardState.operatorProfile.username}. You can acknowledge, resolve, and open investigations from the alert list.`;
+        return;
+      }
+      node.textContent = `Signed in as ${dashboardState.operatorProfile.username}. You can acknowledge alerts from the list and escalate to an admin for resolution.`;
+    }
+
     function renderSummaryCard(title, entries, emptyText) {
       if (!entries || !entries.length) {
         return `
@@ -1351,7 +1453,10 @@ def render_dashboard_html() -> str:
       document.getElementById("auth-summary").textContent =
         "Signed out. Use a bootstrap or admin account to create a new browser session.";
       setDirectoryStatus("Signed out. Admin access is required to manage operators.");
+      setAlertActionStatus("Signed out. Quick alert actions are disabled until you sign back in.");
+      updateTriageHelp();
       renderOperators();
+      renderAlerts();
     }
 
     async function refreshOperatorContext() {
@@ -1374,15 +1479,24 @@ def render_dashboard_html() -> str:
             `Signed in as ${operatorPayload.operator.username}. Admin credentials are required to manage operators.`
           );
         }
+        setAlertActionStatus(
+          operatorPayload.operator.role === "admin"
+            ? `Quick triage enabled for ${operatorPayload.operator.username}.`
+            : `Quick acknowledge enabled for ${operatorPayload.operator.username}.`,
+          "success"
+        );
       } catch (error) {
         dashboardState.operatorProfile = null;
         dashboardState.operators = [];
         document.getElementById("auth-summary").textContent =
           "Sign in to unlock protected imports, alert actions, and admin workflows.";
         setDirectoryStatus("Sign in as an admin to manage operator accounts.");
+        setAlertActionStatus("Sign in to use quick alert actions from the dashboard.");
       }
 
+      updateTriageHelp();
       renderOperators();
+      renderAlerts();
     }
 
     function buildAlertEndpoint() {
@@ -1565,6 +1679,24 @@ def render_dashboard_html() -> str:
       await refreshOperatorContext();
     }
 
+    async function applyAlertAction(alertId, action) {
+      const label = action === "acknowledge" ? "Acknowledge" : "Resolve";
+      setStatus("Updating");
+      setAlertActionStatus(`${label} request sent for ${alertId}...`);
+      const payload = await fetchJson(
+        `/cybersecurity/alerts/${encodeURIComponent(alertId)}/${action}`,
+        {
+          method: "POST",
+          body: JSON.stringify({}),
+        }
+      );
+      setAlertActionStatus(
+        `Alert ${payload.alert_id} updated by ${payload.updated_by}: status is now ${payload.status}.`,
+        "success"
+      );
+      await refreshDashboard();
+    }
+
     function formatTimestamp(value) {
       if (!value) {
         return "unknown time";
@@ -1717,12 +1849,28 @@ def render_dashboard_html() -> str:
       });
     });
 
+    document.getElementById("alerts-list").addEventListener("click", (event) => {
+      const button = event.target.closest("[data-alert-action]");
+      if (!button) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      button.disabled = true;
+      applyAlertAction(button.dataset.alertId, button.dataset.alertAction)
+        .catch((error) => {
+          setStatus("API Error");
+          setAlertActionStatus(error.message, "error");
+        });
+    });
+
     document.getElementById("operator-name").addEventListener("input", () => {
       persistOperatorCredentials();
     });
 
     loadOperatorCredentials();
     applyImportTemplate();
+    updateTriageHelp();
     refreshDashboard();
     refreshOperatorContext();
     setInterval(refreshDashboard, 8000);
