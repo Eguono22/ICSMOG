@@ -246,6 +246,51 @@ class CybersecurityMonitoringService:
         result["operator_name"] = operator_name
         return result
 
+    def import_auth_log(
+        self,
+        payload: Dict[str, Any],
+        operator_name: str = "system",
+    ) -> Dict[str, Any]:
+        operator_name = _normalize_operator_name(operator_name)
+        imported_from = _describe_log_source(payload)
+        try:
+            events = _load_auth_events_from_log_payload(payload)
+            result = self.ingest_auth_events(events)
+        except ValueError as exc:
+            if self.store is not None:
+                self.store.record_import_history(
+                    imported_from,
+                    "auth_log",
+                    operator_name=operator_name,
+                    status="failed",
+                    error_message=str(exc),
+                )
+                self.store.record_audit_event(
+                    operator_name=operator_name,
+                    action_type="import_auth_log",
+                    target=imported_from,
+                    status="failed",
+                    details={"error_message": str(exc)},
+                )
+            raise
+        if self.store is not None:
+            self.store.record_import_history(
+                imported_from,
+                "auth_log",
+                operator_name=operator_name,
+                status="success",
+            )
+            self.store.record_audit_event(
+                operator_name=operator_name,
+                action_type="import_auth_log",
+                target=imported_from,
+                status="success",
+                details={"ingested_events": result["ingested_events"]},
+            )
+        result["imported_from"] = imported_from
+        result["operator_name"] = operator_name
+        return result
+
     def scan_csv_directory(
         self,
         directory_path: str,
@@ -1290,6 +1335,19 @@ def _load_auth_events_from_csv_payload(
     return events
 
 
+def _load_auth_events_from_log_payload(
+    payload: Dict[str, Any],
+) -> List[AuthenticationEvent]:
+    records = _load_ndjson_records(payload, text_key="log_text", path_key="log_path")
+    events: List[AuthenticationEvent] = []
+    for index, record in enumerate(records, start=1):
+        try:
+            events.append(_parse_auth_log_record(record))
+        except ValueError as exc:
+            raise ValueError(f"Auth log line {index}: {exc}") from exc
+    return events
+
+
 def _load_csv_rows(payload: Dict[str, Any]) -> List[Dict[str, str]]:
     csv_text = payload.get("csv_text")
     csv_path = payload.get("csv_path")
@@ -1319,6 +1377,132 @@ def _load_csv_rows(payload: Dict[str, Any]) -> List[Dict[str, str]]:
     return rows
 
 
+def _load_ndjson_records(
+    payload: Dict[str, Any],
+    *,
+    text_key: str,
+    path_key: str,
+) -> List[Dict[str, Any]]:
+    text_value = payload.get(text_key)
+    path_value = payload.get(path_key)
+    if bool(text_value) == bool(path_value):
+        raise ValueError(f"Provide exactly one of '{text_key}' or '{path_key}'")
+
+    if text_value:
+        if not isinstance(text_value, str):
+            raise ValueError(f"'{text_key}' must be a string")
+        content = text_value
+    else:
+        if not isinstance(path_value, str):
+            raise ValueError(f"'{path_key}' must be a string")
+        path = Path(path_value)
+        if not path.exists():
+            raise ValueError(f"Log file '{path_value}' was not found")
+        content = path.read_text(encoding="utf-8")
+
+    records: List[Dict[str, Any]] = []
+    for line_number, line in enumerate(content.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"Line {line_number} must contain valid JSON"
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise ValueError(f"Line {line_number} must contain a JSON object")
+        records.append(parsed)
+
+    if not records:
+        raise ValueError("Log input must include at least one JSON object line")
+    return records
+
+
+def _parse_auth_log_record(data: Dict[str, Any]) -> AuthenticationEvent:
+    username = _first_present(
+        _get_nested_value(data, "user.username"),
+        _get_nested_value(data, "user.name"),
+        _get_nested_value(data, "actor.username"),
+        _get_nested_value(data, "actor.name"),
+        _text_or_none(data.get("username")),
+        _text_or_none(data.get("user_name")),
+        _text_or_none(data.get("email")),
+    )
+    source_ip = _first_present(
+        _text_or_none(data.get("source_ip")),
+        _text_or_none(data.get("client_ip")),
+        _text_or_none(data.get("ip_address")),
+        _text_or_none(data.get("ip")),
+        _get_nested_value(data, "source.ip"),
+        _get_nested_value(data, "network.client_ip"),
+        _get_nested_value(data, "client.ip"),
+    )
+    auth_method = _first_present(
+        _text_or_none(data.get("auth_method")),
+        _text_or_none(data.get("method")),
+        _get_nested_value(data, "auth.method"),
+        _get_nested_value(data, "authentication.method"),
+    )
+    result_value = _first_present(
+        _text_or_none(data.get("result")),
+        _text_or_none(data.get("outcome")),
+        _text_or_none(data.get("status")),
+        _get_nested_value(data, "auth.result"),
+        _get_nested_value(data, "authentication.result"),
+    )
+    normalized_result = _normalize_auth_log_result(result_value)
+    timestamp = _first_present(
+        _text_or_none(data.get("timestamp")),
+        _text_or_none(data.get("occurred_at")),
+        _text_or_none(data.get("time")),
+        _text_or_none(data.get("@timestamp")),
+    )
+    target_resource = _normalize_optional_filter(
+        _first_present(
+            _text_or_none(data.get("target_resource")),
+            _text_or_none(data.get("resource")),
+            _text_or_none(data.get("application")),
+            _text_or_none(data.get("app")),
+            _get_nested_value(data, "target.resource"),
+            _get_nested_value(data, "target.name"),
+        )
+    )
+    failure_reason = _normalize_optional_filter(
+        _first_present(
+            _text_or_none(data.get("failure_reason")),
+            _text_or_none(data.get("reason")),
+            _text_or_none(data.get("error")),
+            _text_or_none(data.get("error_code")),
+            _get_nested_value(data, "auth.reason"),
+            _get_nested_value(data, "authentication.reason"),
+        )
+    )
+    raw_data = dict(data)
+    return _parse_auth_event(
+        {
+            "source": _first_present(
+                _text_or_none(data.get("provider")),
+                _text_or_none(data.get("service")),
+                _text_or_none(data.get("vendor")),
+                _get_nested_value(data, "source.name"),
+                _text_or_none(data.get("source")),
+                "auth-log-connector",
+            ),
+            "username": username,
+            "source_ip": source_ip,
+            "auth_method": auth_method,
+            "result": normalized_result,
+            "timestamp": timestamp,
+            "target_resource": target_resource,
+            "is_privileged": _infer_privileged_access(data),
+            "failure_reason": failure_reason,
+            "raw_data": raw_data,
+        }
+    )
+
+
 def _parse_json_cell(value: str, field_name: str) -> Dict[str, Any]:
     try:
         parsed = json.loads(value)
@@ -1346,6 +1530,14 @@ def _describe_csv_source(payload: Dict[str, Any]) -> str:
     if payload.get("csv_text") is not None:
         return "inline_csv_text"
     return "unknown_csv_source"
+
+
+def _describe_log_source(payload: Dict[str, Any]) -> str:
+    if payload.get("log_path"):
+        return str(payload["log_path"])
+    if payload.get("log_text") is not None:
+        return "inline_log_text"
+    return "unknown_log_source"
 
 
 def _normalize_optional_filter(value: Any) -> str | None:
@@ -1384,6 +1576,83 @@ def _normalize_import_target(target: str) -> str:
     if normalized not in {"network", "security", "auth"}:
         raise ValueError("target must be one of: network, security, auth")
     return normalized
+
+
+def _get_nested_value(data: Dict[str, Any], path: str) -> Any:
+    current: Any = data
+    for segment in path.split("."):
+        if not isinstance(current, dict) or segment not in current:
+            return None
+        current = current[segment]
+    return current
+
+
+def _first_present(*values: Any) -> Any:
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        return value
+    return None
+
+
+def _text_or_none(value: Any) -> str | None:
+    if isinstance(value, (dict, list, tuple, set)):
+        return None
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _normalize_auth_log_result(value: Any) -> str:
+    normalized = str(value).strip().lower() if value is not None else ""
+    mapping = {
+        "success": "success",
+        "succeeded": "success",
+        "ok": "success",
+        "allowed": "success",
+        "failure": "failure",
+        "failed": "failure",
+        "error": "failure",
+        "denied": "denied",
+        "blocked": "denied",
+        "rejected": "denied",
+    }
+    if normalized in mapping:
+        return mapping[normalized]
+    raise ValueError(
+        "result/outcome must map to one of: success, failure, denied"
+    )
+
+
+def _infer_privileged_access(data: Dict[str, Any]) -> bool:
+    explicit = _first_present(
+        data.get("is_privileged"),
+        data.get("privileged"),
+        _get_nested_value(data, "auth.is_privileged"),
+        _get_nested_value(data, "user.is_privileged"),
+    )
+    if explicit is not None:
+        if isinstance(explicit, bool):
+            return explicit
+        normalized = str(explicit).strip().lower()
+        if normalized in {"true", "1", "yes"}:
+            return True
+        if normalized in {"false", "0", "no"}:
+            return False
+
+    role_values = _first_present(
+        _get_nested_value(data, "user.roles"),
+        _get_nested_value(data, "actor.roles"),
+        data.get("roles"),
+    )
+    if isinstance(role_values, list):
+        normalized_roles = {str(role).strip().lower() for role in role_values}
+        if normalized_roles & {"admin", "administrator", "privileged", "root"}:
+            return True
+    return False
 
 
 def _hash_api_key(value: str) -> str:

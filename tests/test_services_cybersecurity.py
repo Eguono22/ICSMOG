@@ -354,6 +354,46 @@ def test_service_imports_auth_csv_and_preserves_context():
     assert auth_event.raw_data["is_privileged"] is True
 
 
+def test_service_imports_auth_log_and_normalizes_nested_fields():
+    service = CybersecurityMonitoringService()
+
+    result = service.import_auth_log(
+        {
+            "log_text": "\n".join(
+                [
+                    (
+                        '{"timestamp":"2026-05-15T08:30:00+00:00","provider":"entra-id",'
+                        '"user":{"username":"alice","roles":["admin"]},'
+                        '"client":{"ip":"198.51.100.77"},'
+                        '"auth":{"method":"password","result":"denied","reason":"disabled_account"},'
+                        '"target":{"resource":"admin-console"}}'
+                    ),
+                    (
+                        '{"timestamp":"2026-05-15T08:31:00+00:00","service":"okta",'
+                        '"actor":{"name":"bob"},'
+                        '"source":{"ip":"198.51.100.88"},'
+                        '"authentication":{"method":"sso","result":"success"},'
+                        '"application":"vpn-console"}'
+                    ),
+                ]
+            )
+        },
+        operator_name="soc-lead",
+    )
+
+    auth_events = service.get_auth_events(limit=5)
+    rules = service.get_triggered_rules()
+
+    assert result["auth_events"] == 2
+    assert result["imported_from"] == "inline_log_text"
+    assert auth_events[0]["username"] == "bob"
+    assert auth_events[1]["username"] == "alice"
+    assert auth_events[1]["is_privileged"] is True
+    assert auth_events[1]["failure_reason"] == "disabled_account"
+    assert auth_events[1]["target_resource"] == "admin-console"
+    assert rules[0]["rule"] == "disabled_account_activity"
+
+
 def test_service_filters_auth_events_in_memory():
     service = CybersecurityMonitoringService()
     service.ingest_auth_payload(

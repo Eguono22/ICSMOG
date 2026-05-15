@@ -207,6 +207,7 @@ Example endpoints:
 - `POST /cybersecurity/import/network-csv`
 - `POST /cybersecurity/import/security-csv`
 - `POST /cybersecurity/import/auth-csv`
+- `POST /cybersecurity/import/auth-log`
 - `POST /cybersecurity/network-events`
 - `POST /cybersecurity/security-events`
 - `POST /cybersecurity/auth-events`
@@ -219,17 +220,31 @@ CSV imports accept either `csv_path` or `csv_text`. Example:
 }
 ```
 
+The auth log connector accepts newline-delimited JSON via `log_path` or
+`log_text`. Example:
+
+```json
+{
+  "log_path": "examples/auth_log_export.ndjson"
+}
+```
+
 Sample files are available at:
 
 - `examples/network_events.csv`
 - `examples/security_events.csv`
 - `examples/auth_events.csv`
+- `examples/auth_log_export.ndjson`
 
 Authentication event payloads accept fields such as `source`, `username`,
 `source_ip`, `auth_method`, `result`, optional `target_resource`,
 `is_privileged`, and `failure_reason`. ICSMOG currently includes explainable
 rules for repeated failures, disabled-account attempts, and privileged logins
 from public IP space.
+The auth log connector maps common nested export fields such as
+`user.username`, `actor.name`, `client.ip`, `source.ip`, `auth.method`,
+`authentication.result`, `target.resource`, and role lists containing
+`admin`/`administrator` into that same auth event model.
 Stored auth history can be queried through `GET /cybersecurity/auth-events`
 using filters like `username`, `source_ip`, `auth_method`, `result`,
 `target_resource`, `failure_reason`, `is_privileged`, `query`, and `limit`.

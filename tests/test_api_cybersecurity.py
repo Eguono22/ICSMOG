@@ -624,6 +624,36 @@ def test_auth_csv_import_endpoint_accepts_file_path():
     assert dashboard["siem"]["triggered_rules"] >= 1
 
 
+def test_auth_log_import_endpoint_accepts_file_path():
+    server, thread = _start_test_server()
+    base_url = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        result = _read_json(
+            f"{base_url}/cybersecurity/import/auth-log",
+            method="POST",
+            payload={
+                "log_path": "examples/auth_log_export.ndjson"
+            },
+            headers=ANALYST_HEADERS,
+        )
+        dashboard = _read_json(f"{base_url}/cybersecurity/dashboard")
+        auth_events = _read_json(f"{base_url}/cybersecurity/auth-events?limit=10")
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert result["ingested_events"] == 4
+    assert result["auth_events"] == 4
+    assert result["imported_from"] == "examples/auth_log_export.ndjson"
+    assert dashboard["siem"]["auth_summary"]["total_events"] == 4
+    assert dashboard["siem"]["triggered_rules"] >= 1
+    assert any(
+        event["failure_reason"] == "disabled_account"
+        for event in auth_events["auth_events"]
+    )
+
+
 def test_import_history_endpoint_reports_recent_imports():
     with tempfile.TemporaryDirectory() as temp_dir:
         server, thread = _start_test_server(

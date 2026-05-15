@@ -47,8 +47,8 @@ def run_cybersecurity_api_server(
       "GET /cybersecurity/alerts, GET /cybersecurity/auth-events, GET /cybersecurity/alerts/<id>/investigation, GET /cybersecurity/import-history, GET /cybersecurity/audit-log, GET /cybersecurity/me, "
       "GET /cybersecurity/operators, POST /cybersecurity/login, POST /cybersecurity/logout, "
       "POST /cybersecurity/operators, POST /cybersecurity/import/scan-directory, POST /cybersecurity/network-events, "
-          "POST /cybersecurity/security-events, POST /cybersecurity/auth-events, POST /cybersecurity/import/network-csv, "
-          "POST /cybersecurity/import/security-csv, POST /cybersecurity/import/auth-csv, POST /cybersecurity/alerts/<id>/acknowledge, "
+      "POST /cybersecurity/security-events, POST /cybersecurity/auth-events, POST /cybersecurity/import/network-csv, "
+          "POST /cybersecurity/import/security-csv, POST /cybersecurity/import/auth-csv, POST /cybersecurity/import/auth-log, POST /cybersecurity/alerts/<id>/acknowledge, "
           "POST /cybersecurity/alerts/<id>/resolve, POST /cybersecurity/alerts/<id>/notes")
     print("Bootstrap accounts: analyst-1 / icsmog-demo-key, admin / icsmog-admin-key")
     try:
@@ -386,6 +386,25 @@ def build_handler(
                     return
                 try:
                     result = service.import_auth_csv(
+                        payload,
+                        operator_name=operator["username"],
+                    )
+                except ValueError as exc:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                self._send_json(HTTPStatus.CREATED, result)
+                return
+
+            if path == "/cybersecurity/import/auth-log":
+                operator = self._require_operator("import_csv")
+                if operator is None:
+                    return
+                payload, error = self._read_json_body()
+                if error is not None:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": error})
+                    return
+                try:
+                    result = service.import_auth_log(
                         payload,
                         operator_name=operator["username"],
                     )
