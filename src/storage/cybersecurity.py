@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
+import os
 import sqlite3
 from contextlib import closing, contextmanager
 from pathlib import Path
@@ -684,16 +685,18 @@ class CybersecurityEventStore:
     def _seed_default_operator_accounts(self) -> None:
         if self.count_operator_accounts() > 0:
             return
+        analyst_key = os.environ.get("ICSMOG_ANALYST_KEY", "icsmog-demo-key")
+        admin_key = os.environ.get("ICSMOG_ADMIN_KEY", "icsmog-admin-key")
         self.upsert_operator_account(
             username="analyst-1",
-            api_key="icsmog-demo-key",
+            api_key=analyst_key,
             role="analyst",
             is_active=True,
             created_by="bootstrap",
         )
         self.upsert_operator_account(
             username="admin",
-            api_key="icsmog-admin-key",
+            api_key=admin_key,
             role="admin",
             is_active=True,
             created_by="bootstrap",

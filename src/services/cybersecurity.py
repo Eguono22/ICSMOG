@@ -8,6 +8,7 @@ import hashlib
 import io
 import json
 import fnmatch
+import os
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -1661,10 +1662,12 @@ def _hash_api_key(value: str) -> str:
 
 def _build_default_operator_accounts() -> Dict[str, Dict[str, Any]]:
     now = datetime.datetime.now(datetime.UTC).isoformat()
+    analyst_key = os.environ.get("ICSMOG_ANALYST_KEY", "icsmog-demo-key")
+    admin_key = os.environ.get("ICSMOG_ADMIN_KEY", "icsmog-admin-key")
     return {
         "analyst-1": {
             "username": "analyst-1",
-            "api_key_hash": _hash_api_key("icsmog-demo-key"),
+            "api_key_hash": _hash_api_key(analyst_key),
             "role": "analyst",
             "is_active": True,
             "created_by": "bootstrap",
@@ -1673,7 +1676,7 @@ def _build_default_operator_accounts() -> Dict[str, Dict[str, Any]]:
         },
         "admin": {
             "username": "admin",
-            "api_key_hash": _hash_api_key("icsmog-admin-key"),
+            "api_key_hash": _hash_api_key(admin_key),
             "role": "admin",
             "is_active": True,
             "created_by": "bootstrap",

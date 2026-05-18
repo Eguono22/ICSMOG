@@ -12,6 +12,12 @@ import datetime
 import json
 from typing import Any, Callable, Dict
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 from src.business import BusinessIntelligence, EnterpriseResourcePlanning
 from src.business.bi import ChartType, DataSet, Report
 from src.business.erp import BusinessProcess, Department

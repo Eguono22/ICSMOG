@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import secrets
+import socket
 from http.cookies import SimpleCookie
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -18,6 +20,17 @@ from src.services.cybersecurity import (
 from src.storage import CybersecurityEventStore
 
 
+class _ICSMOGHTTPServer(ThreadingHTTPServer):
+    """ThreadingHTTPServer with production-safe settings."""
+
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def server_bind(self) -> None:
+        self.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        super().server_bind()
+
+
 def run_cybersecurity_api_server(
     host: str = "127.0.0.1",
     port: int = 8000,
@@ -25,13 +38,16 @@ def run_cybersecurity_api_server(
     seed_demo_data: bool = False,
 ) -> None:
     """Run the cybersecurity API server until interrupted."""
+    host = os.environ.get("ICSMOG_HOST", host)
+    port = int(os.environ.get("ICSMOG_PORT", port))
+    storage_path = os.environ.get("ICSMOG_STORAGE_PATH", storage_path)
     service = CybersecurityMonitoringService(
         store=CybersecurityEventStore(storage_path)
     )
     seed_summary: dict[str, Any] | None = None
     if seed_demo_data:
         seed_summary = seed_mvp_demo_data(service)
-    server = ThreadingHTTPServer(
+    server = _ICSMOGHTTPServer(
         (host, port),
         build_handler(service),
     )

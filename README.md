@@ -100,6 +100,21 @@ cd ICSMOG
 pip install -r requirements.txt
 ```
 
+## Docker Deployment
+
+Run the production-style stack (ICSMOG app + Nginx reverse proxy):
+
+```bash
+cp .env.example .env
+docker compose up -d --build
+```
+
+Then open:
+
+- `http://127.0.0.1/dashboard`
+
+See `DEPLOYMENT.md` for full deployment, persistence, health checks, and update flow.
+
 ## Start Here
 
 If you want to evaluate ICSMOG as a product, start with the cybersecurity MVP flow instead of the full multi-domain demo:

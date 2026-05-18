@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Test and cache artifacts
+.pytest_cache/
+pytest-cache-files-*/
+sandbox_pytest_tmp/
+tmp/
+.ruff_cache/
+.uv-cache/
+uv.lock
+
+# Version control
+.git/
+.github/
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment and secrets – never bake these into the image
+.env
+
+# SQLite databases – use a mounted volume instead
+data/*.db
+
+# Codex temp files
+.codex-temp/
