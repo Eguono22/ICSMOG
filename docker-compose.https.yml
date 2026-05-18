@@ -1,0 +1,20 @@
+# TLS override — use on top of docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.https.yml up -d --build
+#
+# Before starting, place your certificate files at:
+#   certs/fullchain.pem   (certificate + intermediate chain)
+#   certs/privkey.pem     (private key)
+#
+# With Let's Encrypt / Certbot:
+#   certbot certonly --standalone -d yourdomain.com
+#   cp /etc/letsencrypt/live/yourdomain.com/fullchain.pem certs/fullchain.pem
+#   cp /etc/letsencrypt/live/yourdomain.com/privkey.pem   certs/privkey.pem
+
+services:
+  nginx:
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/https.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/nginx/certs:ro

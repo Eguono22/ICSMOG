@@ -73,7 +73,40 @@ docker run --rm -v icsmog_icsmog-data:/data -v $PWD:/backup alpine \
 
 ## 7. TLS (Recommended)
 
-For HTTPS, place a TLS terminator in front of Nginx (recommended: Caddy, Traefik, or cloud load balancer), or extend Nginx with certificate mounts and a 443 server block.
+A TLS-ready Nginx config and compose override are included out of the box.
+
+### Get certificates
+
+With Let's Encrypt:
+
+```bash
+certbot certonly --standalone -d yourdomain.com
+mkdir -p certs
+cp /etc/letsencrypt/live/yourdomain.com/fullchain.pem certs/fullchain.pem
+cp /etc/letsencrypt/live/yourdomain.com/privkey.pem   certs/privkey.pem
+```
+
+Or place any valid `fullchain.pem` / `privkey.pem` pair under `certs/`.
+
+### Start with TLS
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.https.yml up -d --build
+```
+
+This replaces the plain HTTP compose with:
+- Port 80 → 443 redirect
+- Port 443 with Mozilla Intermediate TLS profile (TLS 1.2 + 1.3)
+- HSTS header (1 year)
+- Certificate files mounted read-only from `./certs/`
+
+### Plain HTTP (no certs available)
+
+```bash
+docker compose up -d --build
+```
+
+HTTP-only mode is suitable for local testing or behind a load balancer that handles TLS.
 
 ## 8. Updates
 
