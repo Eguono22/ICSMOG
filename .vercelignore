@@ -1,0 +1,36 @@
+# Development and testing files
+.git
+.gitignore
+.env.local
+.env.*.local
+*.pyc
+__pycache__
+.pytest_cache
+pytest-cache-*
+tmp/
+sandbox_pytest_tmp/
+tests/
+*.md
+
+# Docker files (not needed for Vercel)
+docker-compose.yml
+docker-compose.https.yml
+Dockerfile
+nginx/
+certs/
+
+# Local development
+.venv
+venv/
+.idea/
+.vscode/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.circleci/
+
+# Other
+.DS_Store
+*.log
+node_modules/
