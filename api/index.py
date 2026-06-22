@@ -1,14 +1,18 @@
 """Vercel serverless entrypoint for ICSMOG.
 
 This module exports an ASGI application (`app`) compatible with Vercel's Python runtime.
-Vercel's Python runtime requires FastAPI/Starlette ASGI apps, not raw HTTP handlers.
+Modern web app with static file serving, API docs, and CORS support.
 """
 
 from __future__ import annotations
 
 import os
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 
 from src.services.cybersecurity import CybersecurityMonitoringService, seed_mvp_demo_data
 from src.storage import CybersecurityEventStore
@@ -40,28 +44,73 @@ if _should_seed_demo_data():
     seed_mvp_demo_data(_service)
 
 # Create FastAPI app (ASGI-compatible for Vercel)
-app = FastAPI(title="ICSMOG Cybersecurity API")
+app = FastAPI(
+    title="ICSMOG Cybersecurity API",
+    version="1.0.0",
+    description="Intelligent Computer Systems for Monitoring Organizations - Cybersecurity Module",
+)
+
+# Add CORS middleware for cross-origin requests
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Mount static files (CSS, JS, etc.) if they exist
+static_path = Path(__file__).parent.parent / "static"
+if static_path.exists():
+    app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
 
 
-@app.get("/")
+def _get_index_html() -> str:
+    """Generate index.html with external CSS/JS references."""
+    return """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ICSMOG Security Console</title>
+  <link rel="stylesheet" href="/static/main.css">
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <h1>🛡️ ICSMOG Security Console</h1>
+      <p style="margin: 8px 0 0 0; color: var(--ink-soft); font-size: 14px;">
+        Intelligent Computer Systems for Monitoring Organizations
+      </p>
+      <div style="margin-top: 12px;">
+        <a href="/docs" style="color: var(--accent); text-decoration: none; font-size: 14px; margin-right: 16px;">📚 API Docs</a>
+        <a href="/health" style="color: var(--accent); text-decoration: none; font-size: 14px;">💚 Health Check</a>
+      </div>
+    </header>
+    <div id="dashboard-content" class="loading">Loading dashboard...</div>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>"""
+
+
+@app.get("/", response_class=HTMLResponse)
 async def root():
-    """Root endpoint - serves dashboard."""
-    from src.api.dashboard import render_dashboard_html
-    return HTMLResponse(render_dashboard_html())
+    """Root endpoint - serves main dashboard."""
+    return _get_index_html()
 
 
-@app.get("/dashboard")
+@app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard():
     """Dashboard endpoint."""
-    from src.api.dashboard import render_dashboard_html
-    return HTMLResponse(render_dashboard_html())
+    return _get_index_html()
 
 
-@app.get("/dashboard/alerts/{alert_id}")
+@app.get("/dashboard/alerts/{alert_id}", response_class=HTMLResponse)
 async def dashboard_alert(alert_id: str):
     """Alert detail endpoint."""
     from src.api.dashboard import render_alert_detail_html
-    return HTMLResponse(render_alert_detail_html(alert_id))
+    return render_alert_detail_html(alert_id)
 
 
 @app.get("/health")
@@ -75,7 +124,7 @@ async def health():
 
 @app.get("/cybersecurity/dashboard")
 async def cybersecurity_dashboard():
-    """Get cybersecurity dashboard data."""
+    """Get cybersecurity dashboard data (JSON)."""
     return JSONResponse(_service.get_dashboard())
 
 
