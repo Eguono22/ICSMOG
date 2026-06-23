@@ -6,6 +6,8 @@ Modern web app with static file serving, API docs, and CORS support.
 
 from __future__ import annotations
 
+import html
+import json
 import os
 from pathlib import Path
 
@@ -65,9 +67,96 @@ if static_path.exists():
     app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
 
 
+def _escape_script_json(value: object) -> str:
+        return json.dumps(value, separators=(",", ":")).replace("</", "<\\/")
+
+
+def _render_alert_badge(threat_level: str) -> str:
+        label = threat_level or "Unknown"
+        level = label.strip().lower()
+        if level in {"critical", "high"}:
+                css_class = "critical"
+        elif level in {"medium", "moderate"}:
+                css_class = "warning"
+        else:
+                css_class = "ok"
+        return f'<span class="status-badge {css_class}">{html.escape(label)}</span>'
+
+
+def _render_dashboard_cards(data: dict[str, object]) -> str:
+        alert_count = html.escape(str(data.get("alert_count") or 0))
+        critical_count = html.escape(str(data.get("critical_count") or 0))
+        network_event_count = html.escape(str(data.get("network_event_count") or 0))
+        return f"""
+        <div class="grid">
+            <div class="card">
+                <h3>Active Alerts</h3>
+                <div class="card-value">{alert_count}</div>
+                <div class="card-meta">Total active alerts</div>
+            </div>
+            <div class="card">
+                <h3>Critical Issues</h3>
+                <div class="card-value">{critical_count}</div>
+                <div class="card-meta">Require immediate attention</div>
+            </div>
+            <div class="card">
+                <h3>Network Events</h3>
+                <div class="card-value">{network_event_count}</div>
+                <div class="card-meta">Recent 24 hours</div>
+            </div>
+        </div>
+        """
+
+
+def _render_recent_alerts(data: dict[str, object]) -> str:
+        recent_alerts = data.get("recent_alerts") or []
+        rows: list[str] = []
+        for alert in recent_alerts:
+                if not isinstance(alert, dict):
+                        continue
+                timestamp = html.escape(str(alert.get("timestamp") or ""))
+                threat_level = str(alert.get("threat_level") or "Unknown")
+                source_ip = html.escape(str(alert.get("source_ip") or "N/A"))
+                description = html.escape(str(alert.get("description") or "No description"))
+                rows.append(
+                        "<tr>"
+                        f"<td>{timestamp}</td>"
+                        f"<td>{_render_alert_badge(threat_level)}</td>"
+                        f"<td>{source_ip}</td>"
+                        f"<td>{description}</td>"
+                        "</tr>"
+                )
+
+        if not rows:
+                return ""
+
+        return f"""
+            <div class="panel" style="margin-top: 20px; padding: 20px;">
+                <h2 style="margin: 0 0 16px 0;">Recent Alerts</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Timestamp</th>
+                            <th>Threat Level</th>
+                            <th>Source</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {''.join(rows)}
+                    </tbody>
+                </table>
+            </div>
+        """
+
+
 def _get_index_html() -> str:
     """Generate index.html with external CSS/JS references."""
-    return """<!DOCTYPE html>
+    initial_dashboard = _service.get_dashboard()
+    dashboard_cards = _render_dashboard_cards(initial_dashboard)
+    recent_alerts = _render_recent_alerts(initial_dashboard)
+    dashboard_json = _escape_script_json(initial_dashboard)
+    return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -87,9 +176,15 @@ def _get_index_html() -> str:
         <a href="/health" style="color: var(--accent); text-decoration: none; font-size: 14px;">💚 Health Check</a>
       </div>
     </header>
-    <div id="dashboard-content" class="loading">Loading dashboard...</div>
+        <div id="dashboard-content">
+            {dashboard_cards}
+            {recent_alerts}
+        </div>
   </div>
-  <script src="/static/app.js"></script>
+    <script>
+        window.__ICSMOG_INITIAL_DASHBOARD__ = {dashboard_json};
+    </script>
+    <script src="/static/app.js" defer></script>
 </body>
 </html>"""
 

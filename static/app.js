@@ -6,6 +6,15 @@
 // API base URL (automatically set based on current host)
 const API_BASE = window.location.origin;
 
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 /**
  * Fetch and display dashboard data
  */
@@ -18,7 +27,9 @@ async function loadDashboard() {
     displayDashboard(data);
   } catch (error) {
     console.error('Failed to load dashboard:', error);
-    showError('Failed to load dashboard data');
+    if (!document.getElementById('dashboard-content').innerHTML.trim()) {
+      showError('Failed to load dashboard data');
+    }
   }
 }
 
@@ -64,10 +75,10 @@ function displayDashboard(data) {
         <tbody>
           ${data.recent_alerts.map(alert => `
             <tr>
-              <td>${new Date(alert.timestamp).toLocaleString()}</td>
-              <td><span class="status-badge ${alert.threat_level.toLowerCase()}">${alert.threat_level}</span></td>
-              <td>${alert.source_ip || 'N/A'}</td>
-              <td>${alert.description || 'No description'}</td>
+              <td>${escapeHtml(new Date(alert.timestamp).toLocaleString())}</td>
+              <td><span class="status-badge ${escapeHtml((alert.threat_level || 'ok').toLowerCase())}">${escapeHtml(alert.threat_level || 'Unknown')}</span></td>
+              <td>${escapeHtml(alert.source_ip || 'N/A')}</td>
+              <td>${escapeHtml(alert.description || 'No description')}</td>
             </tr>
           `).join('')}
         </tbody>
@@ -98,7 +109,12 @@ function showSuccess(message) {
  * Initialize the application
  */
 document.addEventListener('DOMContentLoaded', () => {
-  loadDashboard();
+  if (window.__ICSMOG_INITIAL_DASHBOARD__) {
+    displayDashboard(window.__ICSMOG_INITIAL_DASHBOARD__);
+  }
+
+  // Refresh in the background so the page feels instant.
+  requestAnimationFrame(() => loadDashboard());
   // Refresh every 30 seconds
   setInterval(loadDashboard, 30000);
 });
