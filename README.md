@@ -28,6 +28,7 @@ What works well now:
 - local operator accounts with role-based access for protected workflows
 - persistent operator audit trails for imports and alert lifecycle changes
 - API and dashboard alert filtering by severity, status, IPs, protocol, port, and free-text search
+- guided dashboard navigation, quick alert views, and refresh controls with stale-data status
 - dedicated authentication event ingestion with explainable auth-focused correlation rules
 - unit tests covering the existing domain modules
 
@@ -327,6 +328,12 @@ Run the test suite with:
 ```bash
 pip install pytest
 python -m pytest tests/ -v
+```
+
+Check dashboard filter and refresh behavior with Node.js:
+
+```bash
+node --test tests/dashboard.test.cjs
 ```
 
 ## Contributing

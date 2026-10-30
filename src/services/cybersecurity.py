@@ -25,6 +25,7 @@ from src.cybersecurity.siem import (
     SecurityEvent,
 )
 from src.storage import CybersecurityEventStore
+from src.time_utils import utc_now
 
 ROLE_PERMISSIONS = {
     "analyst": {"import_csv", "acknowledge_alert", "add_alert_note"},
@@ -549,7 +550,7 @@ class CybersecurityMonitoringService:
             stored = self.get_audit_log(limit=1, target=alert_id)
             if stored:
                 return stored[0]
-        note_record["created_at"] = datetime.datetime.now(datetime.UTC).isoformat()
+        note_record["created_at"] = utc_now().isoformat()
         return note_record
 
     def resolve_alert(
@@ -766,8 +767,8 @@ class CybersecurityMonitoringService:
                 "role": role,
                 "is_active": is_active,
                 "created_by": created_by,
-                "created_at": datetime.datetime.now(datetime.UTC).isoformat(),
-                "updated_at": datetime.datetime.now(datetime.UTC).isoformat(),
+                "created_at": utc_now().isoformat(),
+                "updated_at": utc_now().isoformat(),
             }
             self._memory_operator_accounts[username] = created
         if created is None:
@@ -1260,7 +1261,7 @@ def _parse_enum(value: Any, enum_type: Any, field_name: str) -> Any:
 
 def _parse_optional_timestamp(value: Any) -> datetime.datetime:
     if value is None:
-        return datetime.datetime.now(datetime.UTC)
+        return utc_now()
     if not isinstance(value, str):
         raise ValueError("timestamp must be an ISO 8601 string")
     try:
@@ -1661,7 +1662,7 @@ def _hash_api_key(value: str) -> str:
 
 
 def _build_default_operator_accounts() -> Dict[str, Dict[str, Any]]:
-    now = datetime.datetime.now(datetime.UTC).isoformat()
+    now = utc_now().isoformat()
     analyst_key = os.environ.get("ICSMOG_ANALYST_KEY", "icsmog-demo-key")
     admin_key = os.environ.get("ICSMOG_ADMIN_KEY", "icsmog-admin-key")
     return {

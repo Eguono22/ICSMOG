@@ -662,6 +662,21 @@ def render_dashboard_html() -> str:
       </aside>
     </section>
 
+    <section class="panel" aria-labelledby="getting-started-title" style="margin-bottom: 20px">
+      <h2 id="getting-started-title">Your security workspace</h2>
+      <p class="panel-copy">Follow a signal from ingestion to investigation in three steps.</p>
+      <nav class="action-row" aria-label="Getting started">
+        <a class="detail-link" href="#operator-controls">1. Sign in and import events</a>
+        <a class="detail-link" href="#alert-workspace">2. Review and investigate alerts</a>
+        <a class="detail-link" href="#audit-workspace">3. Review operator activity</a>
+      </nav>
+      <div class="operator-actions" style="margin-top: 16px">
+        <button class="secondary inline-action" id="refresh-now" type="button">Refresh now</button>
+        <label class="operator-badge"><input id="auto-refresh" type="checkbox" checked> Refresh every 8 seconds</label>
+      </div>
+      <p class="footer-note" id="refresh-status" role="status" aria-live="polite">Loading security data…</p>
+    </section>
+
     <section class="metrics fade-up">
       <article class="metric">
         <div class="metric-label">Network Events</div>
@@ -686,13 +701,18 @@ def render_dashboard_html() -> str:
     </section>
 
     <section class="content-grid fade-up">
-      <article class="panel">
+      <article class="panel" id="alert-workspace">
         <div class="panel-topline">
           <div>
             <h2>Recent Alerts</h2>
             <p class="panel-copy">Explainable detections from the persisted intrusion pipeline.</p>
           </div>
           <div class="status-pill"><span class="pulse"></span>&nbsp;<span id="status-text">Syncing</span></div>
+        </div>
+        <div class="operator-actions" style="margin-bottom: 16px" aria-label="Alert views">
+          <button class="secondary inline-action" type="button" data-alert-view="open">Open alerts</button>
+          <button class="secondary inline-action" type="button" data-alert-view="critical">Critical open alerts</button>
+          <button class="secondary inline-action" type="button" data-alert-view="all">All alerts / clear filters</button>
         </div>
         <div class="filter-row">
           <div class="filter-field">
@@ -822,7 +842,7 @@ def render_dashboard_html() -> str:
     </section>
 
     <section class="history-grid single-panel fade-up">
-      <article class="panel">
+      <article class="panel" id="operator-controls">
         <div class="panel-topline">
           <div>
             <h2>Operator Controls</h2>
@@ -965,7 +985,7 @@ def render_dashboard_html() -> str:
     </section>
 
     <section class="history-grid single-panel fade-up">
-      <article class="panel">
+      <article class="panel" id="audit-workspace">
         <div class="panel-topline">
           <div>
             <h2>Audit Trail</h2>
@@ -1051,7 +1071,25 @@ def render_dashboard_html() -> str:
       return response.json();
     }
 
+    let refreshSequence = 0;
+
+    function applyAlertView(view) {
+      Object.keys(dashboardState.filters).forEach((key) => { dashboardState.filters[key] = ""; });
+      dashboardState.filters.status = view === "all" ? "" : "open";
+      dashboardState.filters.threatLevel = view === "critical" ? "critical" : "";
+      const fields = {
+        threatLevel: "threat-level", status: "status", sourceIp: "source-ip",
+        destinationIp: "destination-ip", protocol: "protocol", query: "query",
+      };
+      Object.entries(fields).forEach(([key, id]) => {
+        document.getElementById(`filter-${id}`).value = dashboardState.filters[key];
+      });
+      return refreshDashboard();
+    }
+
     async function refreshDashboard() {
+      const sequence = ++refreshSequence;
+      const refreshStatus = document.getElementById("refresh-status");
       try {
         const [dashboard, alertPayload, authPayload, importPayload, auditPayload] = await Promise.all([
           fetchJson("/cybersecurity/dashboard"),
@@ -1061,6 +1099,7 @@ def render_dashboard_html() -> str:
           fetchJson("/cybersecurity/audit-log?limit=8"),
         ]);
 
+        if (sequence !== refreshSequence) return;
         dashboardState.dashboard = dashboard;
         dashboardState.alerts = alertPayload.alerts || [];
         dashboardState.authEvents = authPayload.auth_events || [];
@@ -1069,11 +1108,11 @@ def render_dashboard_html() -> str:
         dashboardState.auditLog = auditPayload.audit_log || [];
         render();
         setStatus("Live");
+        refreshStatus.textContent = `Last updated ${new Date().toLocaleTimeString()}.`;
       } catch (error) {
+        if (sequence !== refreshSequence) return;
         setStatus("API Error");
-        document.getElementById("status-text").textContent = "API Error";
-        document.getElementById("alerts-list").innerHTML =
-          `<div class="empty-state">${escapeHtml(error.message)}</div>`;
+        refreshStatus.textContent = `Refresh failed: ${error.message}. Displayed data may be out of date. Use Refresh now to retry.`;
       }
     }
 
@@ -1893,7 +1932,13 @@ def render_dashboard_html() -> str:
     updateTriageHelp();
     refreshDashboard();
     refreshOperatorContext();
-    setInterval(refreshDashboard, 8000);
+    document.getElementById("refresh-now").addEventListener("click", refreshDashboard);
+    document.querySelectorAll("[data-alert-view]").forEach((button) => {
+      button.addEventListener("click", () => applyAlertView(button.dataset.alertView));
+    });
+    setInterval(() => {
+      if (!document.hidden && document.getElementById("auto-refresh").checked) refreshDashboard();
+    }, 8000);
     setInterval(refreshOperatorContext, 12000);
   </script>
 </body>
